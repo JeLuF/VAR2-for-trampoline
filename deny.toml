@@ -1,0 +1,48 @@
+# cargo-deny configuration: licence check for all Rust dependencies (PLT-005 – PLT-007).
+# Run with `cargo deny check`. GStreamer itself and its plugins are native libraries and
+# are reviewed separately before release (see implementation plan, step 14).
+
+[graph]
+all-features = false
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+# Permissive licences only. No GPL/LGPL/AGPL crates may be linked into the application.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "ISC",
+    "MPL-2.0",
+    "OFL-1.1",
+    "LicenseRef-UFL-1.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+
+[[licenses.clarify]]
+# egui's bundled default fonts (Ubuntu font licence is not an SPDX expression in the crate metadata).
+crate = "epaint_default_fonts"
+expression = "(MIT OR Apache-2.0) AND OFL-1.1 AND LicenseRef-UFL-1.0"
+license-files = []
+
+[licenses.private]
+ignore = true
+
+[bans]
+multiple-versions = "allow"
+wildcards = "allow"
+
+[advisories]
+version = 2
+yanked = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

@@ -1,0 +1,35 @@
+VAR for Trampoline — third-party components
+============================================
+
+VAR for Trampoline is licensed under the MIT licence (LICENSE.txt).
+
+This installation contains the following third-party components. Their licence
+texts are in the "licenses" folder.
+
+GStreamer (https://gstreamer.freedesktop.org/)
+  The GStreamer core libraries and plugins (gstreamer-1.0, gst-plugins-base,
+  gst-plugins-good, gst-plugins-bad) and the libraries they use (GLib, libffi,
+  PCRE2, proxy-libintl, ORC, libjpeg-turbo, zlib and others) are distributed as
+  separate, unmodified dynamic libraries (DLLs) from the official GStreamer MSVC
+  binary release. GStreamer is licensed under the GNU Lesser General Public
+  License, version 2.1 or later (LGPL-2.1-or-later). You may replace these DLLs
+  with other builds of the same version. The source code is available at
+  https://gstreamer.freedesktop.org/src/ and the source of the exact binary
+  release at https://gstreamer.freedesktop.org/data/pkg/windows/.
+  No GPL-licensed plugin or library is included. gst-plugins-good (jpeg,
+  imagefreeze) has the same licence text as gst-plugins-base
+  (licenses/gst-plugins-base-1.0).
+
+OpenH264 (https://www.openh264.org/)
+  Software H.264 encoder, used only when no hardware encoder is available.
+  Copyright (c) 2013, Cisco Systems. BSD 2-Clause licence (licenses/openh264).
+
+Microsoft Visual C++ runtime
+  vcruntime140.dll, vcruntime140_1.dll, msvcp140.dll: distributed with the
+  application under the Visual Studio redistribution terms.
+  Copyright (c) Microsoft Corporation.
+
+Rust crates
+  The executables contain Rust libraries under permissive licences (MIT,
+  Apache-2.0, BSD, ISC, Zlib, Unicode and similar); the list with their licences
+  is in licenses/rust-crates.txt.

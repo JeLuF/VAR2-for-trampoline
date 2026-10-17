@@ -1,0 +1,39 @@
+[package]
+name = "var-app"
+description = "VAR for Trampoline: video assisted referee application"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "var"
+path = "src/main.rs"
+
+[dependencies]
+var-core.workspace = true
+var-capture.workspace = true
+var-record.workspace = true
+var-playback.workspace = true
+var-control.workspace = true
+
+anyhow.workspace = true
+argon2 = "0.5"
+# OS random numbers for the PIN hash salt.
+password-hash = { version = "0.5", features = ["getrandom"] }
+chrono.workspace = true
+clap.workspace = true
+eframe.workspace = true
+rfd.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+wgpu.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_System_Power"] }
+
+# The version eframe uses: to switch off the default macOS menu, whose Cmd+Q would
+# quit without asking the application (SYS-001).
+[target.'cfg(target_os = "macos")'.dependencies]
+winit = { version = "0.30", default-features = false }

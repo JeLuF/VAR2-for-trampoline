@@ -1,0 +1,19 @@
+[package]
+name = "var-playback"
+description = "Index reader, packet source, decoders, frame cache and sync player"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+var-core.workspace = true
+var-capture.workspace = true
+gstreamer.workspace = true
+gstreamer-app.workspace = true
+gstreamer-video.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+var-record.workspace = true

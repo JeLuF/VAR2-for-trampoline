@@ -1,0 +1,57 @@
+[workspace]
+resolver = "3"
+members = [
+    "var-app",
+    "var-core",
+    "var-capture",
+    "var-record",
+    "var-playback",
+    "var-control",
+    "dev-tools/var-check",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+var-core = { path = "var-core" }
+var-capture = { path = "var-capture" }
+var-record = { path = "var-record" }
+var-playback = { path = "var-playback" }
+var-control = { path = "var-control" }
+var-check = { path = "dev-tools/var-check" }
+
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+rfd = "0.15"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+clap = { version = "4.5", features = ["derive"] }
+directories = "6"
+eframe = { version = "0.32", default-features = false, features = [
+    "accesskit",
+    "default_fonts",
+    "wayland",
+    "wgpu",
+    "x11",
+] }
+# Minimum GStreamer runtime: 1.24 (Ubuntu 24.04+, current Windows/macOS packages).
+# Must match the wgpu version used by eframe. Listed only to enable wgpu's default
+# backends (DX12/Vulkan, Metal, GL), which eframe doesn't enable itself.
+wgpu = "25"
+gstreamer = { version = "0.24", features = ["v1_24"] }
+gstreamer-app = { version = "0.24", features = ["v1_24"] }
+gstreamer-video = { version = "0.24", features = ["v1_24"] }
+tracing = "0.1"
+windows-sys = "0.61"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["chrono", "env-filter", "fmt"] }
+
+[profile.dev.package."*"]
+# Dependencies (egui, wgpu, GStreamer bindings) are optimised even in debug builds,
+# otherwise rendering video in later steps is far too slow to test.
+opt-level = 2

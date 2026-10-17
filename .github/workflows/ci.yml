@@ -1,0 +1,120 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  GSTREAMER_VERSION: "1.28.6"
+
+jobs:
+  build:
+    name: Build and test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Ubuntu: switch to ubuntu-26.04 once GitHub provides the runner image.
+        os: [windows-latest, macos-14, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GStreamer (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
+            gstreamer1.0-libav \
+            libxkbcommon-dev libwayland-dev
+
+      - name: Install GStreamer (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install gstreamer pkgconf
+          echo "PKG_CONFIG_PATH=$(brew --prefix)/lib/pkgconfig" >> "$GITHUB_ENV"
+
+      - name: Install GStreamer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installer = "gstreamer-1.0-msvc-x86_64-$env:GSTREAMER_VERSION.exe"
+          $url = "https://gstreamer.freedesktop.org/data/pkg/windows/$env:GSTREAMER_VERSION/msvc/$installer"
+          Invoke-WebRequest $url -OutFile "$env:RUNNER_TEMP\$installer"
+          $dir = "C:\gstreamer\1.0\msvc_x86_64"
+          Start-Process "$env:RUNNER_TEMP\$installer" -Wait -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$dir"
+          if (-not (Test-Path "$dir\lib\pkgconfig\gstreamer-1.0.pc")) { throw "GStreamer development files missing in $dir" }
+          "$dir\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "PKG_CONFIG_PATH=$dir\lib\pkgconfig" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Build
+        run: cargo build --workspace --release --locked
+
+      - name: Test
+        run: cargo test --workspace --locked
+
+  msi:
+    name: MSI smoke build (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GStreamer
+        shell: pwsh
+        run: |
+          $installer = "gstreamer-1.0-msvc-x86_64-$env:GSTREAMER_VERSION.exe"
+          $url = "https://gstreamer.freedesktop.org/data/pkg/windows/$env:GSTREAMER_VERSION/msvc/$installer"
+          Invoke-WebRequest $url -OutFile "$env:RUNNER_TEMP\$installer"
+          Start-Process "$env:RUNNER_TEMP\$installer" -Wait -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=C:\gstreamer\1.0\msvc_x86_64"
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install WiX Toolset
+        run: dotnet tool install --global wix --version 5.0.2
+
+      - name: Build MSI
+        shell: pwsh
+        run: ./packaging/windows/build-msi.ps1 -GStreamerRoot C:\gstreamer\1.0\msvc_x86_64
+
+      - name: Smoke test (extract, start without system GStreamer)
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem target\msi\*.msi | Select-Object -First 1
+          $target = "$env:RUNNER_TEMP\msi"
+          $p = Start-Process msiexec -ArgumentList "/a", "`"$($msi.FullName)`"", "/qn", "TARGETDIR=`"$target`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec /a failed: $($p.ExitCode)" }
+          $exe = Get-ChildItem $target -Recurse -Filter var.exe | Select-Object -First 1
+          if (-not (Test-Path (Join-Path $exe.DirectoryName "lib\gstreamer-1.0\gstcoreelements.dll"))) { throw "plugins missing" }
+          # Without GStreamer on PATH: all DLLs must come from the package.
+          $env:PATH = "C:\Windows\System32;C:\Windows"
+          $p = Start-Process $exe.FullName -ArgumentList "--version" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "var.exe --version failed: $($p.ExitCode)" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: msi
+          path: target/msi/*.msi
+
+  licenses:
+    name: Licence check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check licenses bans sources

@@ -1,0 +1,15 @@
+[package]
+name = "var-check"
+description = "Development tool: analyse VAR recordings (not part of the delivered application)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+var-core.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+clap.workspace = true
+gstreamer.workspace = true
+gstreamer-app.workspace = true
