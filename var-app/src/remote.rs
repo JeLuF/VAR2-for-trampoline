@@ -15,7 +15,10 @@ use crate::shortcuts::Action;
 pub struct RemoteControl {
     /// What the operator set: on or off, and the port.
     pub settings: RemoteControlConfig,
-    server: Option<ControlServer>,
+    /// The running server and the port it was asked for (0 in tests: any free port).
+    server: Option<(ControlServer, u16)>,
+    /// All network interfaces; the loopback address in tests (no firewall prompt).
+    bind_ip: IpAddr,
     /// The port the server could not be started on, with the reason; not retried
     /// until the settings change.
     error: Option<(u16, String)>,
@@ -31,6 +34,7 @@ impl RemoteControl {
         RemoteControl {
             settings,
             server: None,
+            bind_ip: var_control::listen_address(0).ip(),
             error: None,
             local_address: None,
             sender,
@@ -43,7 +47,7 @@ impl RemoteControl {
     /// received since the last call. Call once per UI frame.
     pub fn update(&mut self) -> Vec<Action> {
         let wanted = self.settings.enabled.then_some(self.settings.port);
-        let running = self.server.as_ref().map(|s| s.address().port());
+        let running = self.server.as_ref().map(|(_, port)| *port);
         if running.is_some() && running != wanted {
             self.server = None;
         }
@@ -56,12 +60,12 @@ impl RemoteControl {
         {
             let sender = self.sender.clone();
             let ctx = self.ctx.clone();
-            match ControlServer::start(port, move |command, _peer| {
+            match ControlServer::start_on((self.bind_ip, port).into(), move |command, _peer| {
                 let _ = sender.send(command);
                 ctx.request_repaint();
             }) {
                 Ok(server) => {
-                    self.server = Some(server);
+                    self.server = Some((server, port));
                     self.error = None;
                     self.local_address = var_control::local_address();
                 }
@@ -79,7 +83,7 @@ impl RemoteControl {
         if let Some((port, e)) = &self.error {
             return Some(Err(format!("Port {port}: {e}")));
         }
-        let server = self.server.as_ref()?;
+        let (server, _) = self.server.as_ref()?;
         let port = server.address().port();
         Some(Ok(match self.local_address {
             Some(ip) => format!("Listening on {ip}:{port} (all network interfaces)"),
@@ -124,12 +128,14 @@ mod tests {
                 port: 0,
             },
         );
+        // Loopback only in the test: no Windows Firewall prompt.
+        remote.bind_ip = std::net::Ipv4Addr::LOCALHOST.into();
         assert!(remote.update().is_empty());
         assert!(remote.status().is_none(), "disabled by default");
 
         remote.settings.enabled = true;
         remote.update();
-        let port = remote.server.as_ref().unwrap().address().port();
+        let port = remote.server.as_ref().unwrap().0.address().port();
         let stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
         let mut reader = BufReader::new(stream.try_clone().unwrap());
         let mut writer = stream;

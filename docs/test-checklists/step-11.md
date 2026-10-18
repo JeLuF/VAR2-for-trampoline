@@ -17,7 +17,7 @@ Automated: `cargo test -p var-app drawing` (fading, trails removed by themselves
 | 5 | Drawing works in locked mode (ROLE-005). | | | |
 | 6 | No drawing in live mode (the live view is not affected). | | | |
 | 7 | Changing the window size or switching to full screen: a trail stays on the same spot of the picture. | | | |
-| 8 | Drawing during playback at 1×: the UI frame rate in the debug overlay (footer) stays at the display rate. | | | |
+| 8 | Drawing during playback at 1×: the UI frame rate in the debug overlay (bottom left) stays at the display rate. | | | |
 | 9 | Recordings and `markers.json` contain no drawing data: after drawing, the recording plays back without trails in VLC; `markers.json` is unchanged (DRW-003). | | | |
 | 10 | Back to live and review again: earlier trails are gone. | | | |
 

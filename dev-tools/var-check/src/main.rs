@@ -54,6 +54,9 @@ impl Checks {
 }
 
 fn main() -> ExitCode {
+    // Installed with the application: use its GStreamer, not another one.
+    var_core::runtime::suppress_error_dialogs();
+    var_core::runtime::use_bundled_gstreamer();
     let args = Args::parse();
     let mut checks = Checks { all_passed: true };
 

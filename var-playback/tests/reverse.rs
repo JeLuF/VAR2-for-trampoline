@@ -122,6 +122,55 @@ fn reverse_playback_shows_every_frame_backwards() {
         }
     }
 
+    // The thread calling tick() stalls (busy UI, loaded CI machine): slow motion still
+    // shows every frame, it gets slower instead of skipping.
+    for reverse in [true, false] {
+        player.pause();
+        player.seek(start);
+        assert!(wait_for(Duration::from_secs(3), || {
+            player.camera(0).unwrap().frame().map(|f| f.wall_us)
+                == sources[0]
+                    .frame_at(start)
+                    .and_then(|f| sources[0].record(f))
+                    .map(|r| r.wall_us)
+        }));
+        player.set_speed(0.5);
+        if reverse {
+            player.play_reverse();
+        } else {
+            player.play();
+        }
+        let mut shown: Vec<i64> = Vec::new();
+        let begin = Instant::now();
+        while begin.elapsed() < Duration::from_secs(3) {
+            player.tick();
+            // Let the camera show the frame, then stall.
+            std::thread::sleep(Duration::from_millis(20));
+            if let Some(wall) = player.camera(0).unwrap().frame().map(|f| f.wall_us)
+                && shown.last() != Some(&wall)
+            {
+                shown.push(wall);
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        player.pause();
+        assert!(shown.len() > 5, "playback moved: {} frames", shown.len());
+        let source = &sources[0];
+        for pair in shown.windows(2) {
+            let current = source.frame_at(pair[0]).unwrap();
+            let neighbour = if reverse {
+                source.prev(current)
+            } else {
+                source.next(current)
+            };
+            let expected = source.record(neighbour.unwrap()).unwrap().wall_us;
+            assert_eq!(
+                pair[1], expected,
+                "stalls, reverse {reverse}: frame skipped"
+            );
+        }
+    }
+
     // Faster than MAX_REVERSE_SPEED is forward only.
     player.set_speed(2.0);
     player.play_reverse();

@@ -20,7 +20,7 @@ The installer contains everything the application needs, including GStreamer; no
 Where things are:
 - Recordings: `Videos\VAR` (changeable in the Recording menu).
 - Configuration: `%APPDATA%\VAR for Trampoline\config\config.json`.
-- Logs: `%LOCALAPPDATA%\VAR for Trampoline\data\logs`, one file per day (the folder is shown at the bottom of the window).
+- Logs: `%LOCALAPPDATA%\VAR for Trampoline\data\logs`, one file per day (Help → About shows the folder and opens it).
 
 The laptop must run on mains power during tests and events.
 

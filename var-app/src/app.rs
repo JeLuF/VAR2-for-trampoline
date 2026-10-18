@@ -16,7 +16,7 @@ use crate::live;
 use crate::live::{LiveCamera, Selection};
 use crate::lock::{self, Lock, UnlockError};
 use crate::monitor::ResourceMonitor;
-use crate::recording::{self, Recorder};
+use crate::recording::{self, EncoderState, Recorder};
 use crate::remote::RemoteControl;
 use crate::review::{MARKER_COLOR, ReviewAction, ReviewMode};
 use crate::setup::{self, ERROR_COLOR, MenuBar, RECORDING_COLOR, SetupAction, WARNING_COLOR};
@@ -71,6 +71,8 @@ pub struct VarApp {
     remote: RemoteControl,
     /// The keyboard shortcut overlay is shown (F1, INP-002).
     help_open: bool,
+    /// Help → About is shown.
+    about_open: bool,
     /// The window covers the whole screen, without title bar and taskbar.
     window_full_screen: bool,
     /// The saved window mode was applied to the window (first frame).
@@ -264,6 +266,7 @@ impl VarApp {
             resource_monitor: ResourceMonitor::new(options.resource_log_interval),
             remote,
             help_open: false,
+            about_open: false,
             window_full_screen: config.window_full_screen,
             window_mode_applied: false,
             observed_full_screen: None,
@@ -475,9 +478,72 @@ impl VarApp {
         }
     }
 
+    /// Help → About: version, components, where logs and configuration are.
+    fn show_about(&mut self, ctx: &egui::Context) {
+        let mut open = self.about_open;
+        let encoder = match self.recorder.encoder() {
+            EncoderState::Detecting => "detecting…".to_owned(),
+            EncoderState::Found(e) => format!(
+                "{} ({})",
+                e.description,
+                if e.hardware { "hardware" } else { "software" }
+            ),
+            EncoderState::Missing => "none available".to_owned(),
+        };
+        egui::Window::new("About VAR for Trampoline")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.heading(var_core::APP_NAME);
+                ui.label(format!("Version {}", var_core::VERSION));
+                ui.weak("Video assisted referee for trampoline. MIT licence.");
+                ui.add_space(8.0);
+                egui::Grid::new("about")
+                    .num_columns(2)
+                    .spacing([16.0, 6.0])
+                    .show(ui, |ui| {
+                        ui.label("Media framework");
+                        ui.label(&self.gstreamer_version);
+                        ui.end_row();
+                        ui.label("Encoder");
+                        ui.label(encoder);
+                        ui.end_row();
+                        ui.label("Renderer");
+                        ui.label(&self.renderer);
+                        ui.end_row();
+                        ui.label("Log files");
+                        ui.horizontal(|ui| {
+                            ui.label(self.log_dir.display().to_string());
+                            if ui.small_button("Open").clicked() {
+                                open_folder(&self.log_dir);
+                            }
+                        });
+                        ui.end_row();
+                        ui.label("Configuration");
+                        ui.label(self.config_path.display().to_string());
+                        ui.end_row();
+                    });
+                ui.add_space(8.0);
+                ui.weak(
+                    "Third-party components (GStreamer, LGPL) and their licences: \
+                     THIRD-PARTY-NOTICES.txt and the licenses folder in the installation \
+                     folder.",
+                );
+            });
+        self.about_open = open;
+    }
+
     /// Full screen window: no title bar, the taskbar hidden. The menu bar of the
     /// application stays, with the recording status (VIEW-005).
     fn set_window_full_screen(&mut self, on: bool, ctx: &egui::Context) {
+        // Locked: full screen can be switched on, but not off.
+        if !on && self.window_full_screen && self.lock.is_locked() {
+            info!("leaving full screen refused: settings are locked");
+            self.notice("Settings are locked: full screen stays on");
+            return;
+        }
         info!(on, "full screen window");
         self.window_full_screen = on;
         ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(on));
@@ -930,6 +996,20 @@ impl VarApp {
     }
 }
 
+/// Opens a folder in the file manager.
+fn open_folder(path: &std::path::Path) {
+    let program = if cfg!(windows) {
+        "explorer"
+    } else if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    if let Err(e) = std::process::Command::new(program).arg(path).spawn() {
+        warn!(%e, path = %path.display(), "cannot open the folder");
+    }
+}
+
 /// Tiles for `count` cameras: a grid with as many columns as needed for a roughly
 /// square arrangement (2 cameras: side by side).
 fn grid_tiles(area: egui::Rect, count: usize) -> Vec<(usize, egui::Rect)> {
@@ -974,7 +1054,14 @@ impl eframe::App for VarApp {
             // Only a change of the window's state counts: right after a toggle, the
             // window may still report the old state for a few frames.
             if self.observed_full_screen.is_some() {
-                self.window_full_screen = actual;
+                if !actual && self.window_full_screen && self.lock.is_locked() {
+                    // Locked: the window left full screen without the application
+                    // (display change, OS): back to full screen.
+                    info!("full screen ended by the system while locked: restored");
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
+                } else {
+                    self.window_full_screen = actual;
+                }
             }
             self.observed_full_screen = Some(actual);
         }
@@ -1045,6 +1132,7 @@ impl eframe::App for VarApp {
                 SetupAction::StopRequested => {}
                 SetupAction::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
                 SetupAction::Help => self.help_open = true,
+                SetupAction::About => self.about_open = true,
                 SetupAction::WindowFullScreen => {
                     self.set_window_full_screen(!self.window_full_screen, ctx);
                 }
@@ -1066,26 +1154,7 @@ impl eframe::App for VarApp {
         });
         self.disk_warning(ctx);
 
-        egui::TopBottomPanel::bottom("footer").show(ctx, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.weak(format!("Version {}", var_core::VERSION));
-                ui.separator();
-                ui.weak(&self.gstreamer_version);
-                ui.separator();
-                ui.weak(format!("Renderer: {}", self.renderer));
-                ui.separator();
-                ui.weak(format!("Log: {}", self.log_dir.display()));
-                if self.debug_overlay {
-                    ui.separator();
-                    ui.weak(format!(
-                        "UI {:.0} fps, {:.1} ms/frame",
-                        self.ui_timing.fps, self.ui_timing.update_ms
-                    ));
-                }
-            });
-        });
-
-        // Review controls above the footer.
+        // Review controls at the bottom.
         let mut back_to_live = false;
         if let Some(review) = &mut self.review {
             egui::TopBottomPanel::bottom("review").show(ctx, |ui| {
@@ -1106,6 +1175,21 @@ impl eframe::App for VarApp {
 
         self.show_dialog(ctx);
         self.show_notice(ctx);
+        self.show_about(ctx);
+        // Debug overlay: UI frame rate, bottom left.
+        if self.debug_overlay {
+            egui::Area::new(egui::Id::new("ui timing"))
+                .anchor(egui::Align2::LEFT_BOTTOM, [8.0, -8.0])
+                .interactable(false)
+                .show(ctx, |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        ui.monospace(format!(
+                            "UI {:.0} fps, {:.1} ms/frame",
+                            self.ui_timing.fps, self.ui_timing.update_ms
+                        ));
+                    });
+                });
+        }
         // INP-002: all keyboard shortcuts, over the video.
         egui::Window::new("Keyboard shortcuts")
             .open(&mut self.help_open)

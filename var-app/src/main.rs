@@ -107,7 +107,8 @@ struct Args {
 }
 
 fn main() -> ExitCode {
-    use_bundled_gstreamer();
+    var_core::runtime::suppress_error_dialogs();
+    var_core::runtime::use_bundled_gstreamer();
     let args = Args::parse();
     let log_dir = args
         .log_dir
@@ -164,13 +165,19 @@ fn run(args: Args, log_dir: PathBuf) -> anyhow::Result<()> {
         log_dir,
     };
 
+    let mut viewport = eframe::egui::ViewportBuilder::default()
+        .with_title(var_core::APP_NAME)
+        .with_inner_size([1280.0, 800.0])
+        .with_min_inner_size([800.0, 500.0]);
+    // Window and taskbar icon (the same as embedded in var.exe on Windows).
+    match eframe::icon_data::from_png_bytes(include_bytes!("../../assets/var-256.png")) {
+        Ok(icon) => viewport = viewport.with_icon(icon),
+        Err(e) => error!(%e, "cannot load the application icon"),
+    }
     let native_options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
         wgpu_options: wgpu_configuration(),
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_title(var_core::APP_NAME)
-            .with_inner_size([1280.0, 800.0])
-            .with_min_inner_size([800.0, 500.0]),
+        viewport,
         event_loop_builder: macos_without_default_menu(),
         ..Default::default()
     };
@@ -198,45 +205,6 @@ fn macos_without_default_menu() -> Option<eframe::EventLoopBuilderHook> {
 #[cfg(not(target_os = "macos"))]
 fn macos_without_default_menu() -> Option<eframe::EventLoopBuilderHook> {
     None
-}
-
-/// With a GStreamer runtime installed next to the executable (Windows MSI: the DLLs
-/// next to `var.exe`, plugins in `lib\gstreamer-1.0`), uses only that runtime: its
-/// plugins, its plugin scanner and an own plugin registry, so a GStreamer installed
-/// elsewhere on the machine can't interfere.
-fn use_bundled_gstreamer() {
-    let Some(dir) = std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|d| d.to_owned()))
-    else {
-        return;
-    };
-    let plugins = dir.join("lib").join("gstreamer-1.0");
-    if !plugins.is_dir() {
-        return;
-    }
-    let scanner = dir
-        .join("libexec")
-        .join("gstreamer-1.0")
-        .join(if cfg!(windows) {
-            "gst-plugin-scanner.exe"
-        } else {
-            "gst-plugin-scanner"
-        });
-    let registry = var_core::paths::log_dir()
-        .parent()
-        .map(|d| d.join("gstreamer-registry.bin"));
-
-    // SAFETY: called first thing in main, before any other thread exists.
-    unsafe {
-        std::env::set_var("GST_PLUGIN_SYSTEM_PATH_1_0", &plugins);
-        std::env::remove_var("GST_PLUGIN_PATH_1_0");
-        std::env::remove_var("GST_PLUGIN_PATH");
-        std::env::set_var("GST_PLUGIN_SCANNER_1_0", &scanner);
-        if let Some(registry) = registry {
-            std::env::set_var("GST_REGISTRY_1_0", registry);
-        }
-    }
 }
 
 /// Graphics backends: DX12 on Windows (native, and the API the hardware video decoders

@@ -23,7 +23,9 @@ Video Assisted Referee application for trampoline competitions: records the came
 - Lock mode: the application starts unlocked. After a PIN has been set (mode menu at the far left → Set PIN…), "Lock settings" locks: the Recording and Debug menus, camera selection, the number of cameras, start/stop and quitting (window close, Alt+F4, Cmd+Q, Quit) are unavailable; review, markers and full screen stay available. "Unlock settings…" asks for the PIN — the only place where a PIN is asked for. After 5 wrong PINs, unlocking pauses for 30 s. The PIN is stored only as an Argon2 hash; the mode indicator ("Unlocked" / "LOCKED") is always visible.
 - Quitting while recording (unlocked) needs confirmation. While recording, the computer doesn't go to sleep and the screen saver doesn't start.
 - F1 (or Help → Keyboard shortcuts) shows all keyboard shortcuts over the video.
-- View → Full screen window (F11) hides the window's title bar and the Windows taskbar; the application's menu bar with the recording status stays. The setting is saved, so the application starts in full screen again.
+- View → Full screen window (F11) hides the window's title bar and the Windows taskbar; the application's menu bar with the recording status stays. The setting is saved, so the application starts in full screen again. With locked settings, full screen can be switched on but not off.
+- Help → About shows the version, GStreamer version, encoder, renderer, and the log and configuration folders.
+- Application icon: `assets/var.ico` (embedded in `var.exe` on Windows, used by the installer) and `assets/var-256.png` (window icon), drawn by `packaging/icon/make-icon.ps1`.
 - Remote control for Bitfocus Companion / Stream Deck: Recording menu → Remote control (off by default). A text protocol over TCP (default port 7450, all network interfaces) for review, marker and view functions; nothing can start or stop the recording, change settings or quit. See [docs/remote-control.md](docs/remote-control.md).
 - The application runs at above-normal process priority (Windows), so other programs can't stall capture. Resource use and frame counters are logged every minute for endurance checks. No internet or network access is needed (NFR-002); only the remote control, when enabled, listens on the network.
 - Cameras, modes, folder, segment length, disk warning thresholds, remote control and the PIN hash are saved automatically and restored on the next start (`config.json` in the per-user configuration folder).
@@ -133,7 +135,7 @@ Debug options:
 | `--recording-dir DIR` | Recording folder (default: `VAR` in the user's videos folder) |
 | `--log-dir DIR` | Writes log files to DIR |
 
-Logs go to the console and to a daily log file `var.<date>.log`; the folder is shown at the bottom of the window. The environment variable `VAR_LOG` overrides the log filter, e.g. `VAR_LOG=debug`.
+Logs go to the console and to a daily log file `var.<date>.log`; Help → About shows the folder. The environment variable `VAR_LOG` overrides the log filter, e.g. `VAR_LOG=debug`.
 
 ## Tests and checks
 

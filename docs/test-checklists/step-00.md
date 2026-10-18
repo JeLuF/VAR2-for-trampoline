@@ -10,8 +10,8 @@ Run once per OS with real capture cards. Record the result (✔ / ✘ and notes)
 |---|---|---|---|
 | Tester / date | | | |
 | Machine | | | |
-| GStreamer version (window footer) | | | |
-| Renderer (window footer) | | | |
+| GStreamer version (Help → About) | | | |
+| Renderer (Help → About) | | | |
 | Capture card 1 (model, MJPEG/YUY2) | | | |
 | Capture card 2 (model, MJPEG/YUY2) | | | |
 
@@ -28,7 +28,7 @@ Run once per OS with real capture cards. Record the result (✔ / ✘ and notes)
 | 7 | Plugging it back in adds it within 2 s, with the same modes. | | | |
 | 8 | `var --synthetic-cameras 2` lists two synthetic cameras with 1080p50/60 in MJPEG and YUY2. | | | |
 | 9 | Without the flag, no synthetic camera is listed. | | | |
-| 10 | The log file (folder in the window footer) contains application start, the GStreamer version, the renderer, each connected device, and the connect/disconnect events from checks 6–7, with local timestamps. | | | |
+| 10 | The log file (folder in Help → About) contains application start, the GStreamer version, the renderer, each connected device, and the connect/disconnect events from checks 6–7, with local timestamps. | | | |
 | 11 | Closing the window ends the process, and "application exited" is logged. | | | |
 
 ## Notes

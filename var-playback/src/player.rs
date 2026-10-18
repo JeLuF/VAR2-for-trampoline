@@ -64,6 +64,8 @@ const MAX_WAIT_FOR_CAMERAS: Duration = Duration::from_secs(1);
 /// Up to this much of a wait is made up afterwards (less than a frame), so the short
 /// waits for a camera to show the next frame don't slow down playback.
 const WAIT_MADE_UP: Duration = Duration::from_millis(15);
+/// One tick advances playback by at most this much real time (see `tick`).
+const MAX_TICK: Duration = Duration::from_millis(50);
 
 /// A decoded frame with its capture time.
 pub struct ReviewFrame {
@@ -841,10 +843,19 @@ impl ReviewPlayer {
             self.waited.0 += now.duration_since(since);
             self.waited.1 += 1;
         }
-        let elapsed = now.duration_since(self.last_tick);
+        // After a stall of the calling thread (UI busy, system load), the position
+        // doesn't jump: frames would be skipped. At most MAX_TICK of real time counts,
+        // and in slow motion at most 90 % of a frame interval per tick, so every frame
+        // is shown; playback is briefly slower instead.
+        let elapsed = now.duration_since(self.last_tick).min(MAX_TICK);
         self.last_tick = now;
         let advanced = if self.playing {
-            let step = (elapsed.as_micros() as f64 * self.speed).round() as i64;
+            let mut step = (elapsed.as_micros() as f64 * self.speed).round() as i64;
+            if self.speed < 1.0
+                && let Some(frame_us) = self.shortest_frame_us()
+            {
+                step = step.min(frame_us * 9 / 10);
+            }
             if self.reverse {
                 self.position_us.saturating_sub(step)
             } else {
@@ -866,6 +877,14 @@ impl ReviewPlayer {
             self.position_us = position;
             self.update_targets();
         }
+    }
+
+    /// The shortest frame interval of the cameras, µs.
+    fn shortest_frame_us(&self) -> Option<i64> {
+        self.cameras
+            .iter()
+            .map(|(_, camera)| camera.source().frame_us())
+            .min()
     }
 
     /// Whether a camera is still decoding towards the position: no frame yet; playing

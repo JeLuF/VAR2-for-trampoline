@@ -69,11 +69,14 @@ $bin = "target\$rustTarget\release"
 $OutDir = Join-Path $repo $OutDir
 $stage = Join-Path $OutDir "stage-$Arch"
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
-New-Item -ItemType Directory -Force "$stage\lib\gstreamer-1.0", "$stage\libexec\gstreamer-1.0", "$stage\licenses" | Out-Null
+New-Item -ItemType Directory -Force "$stage\lib\gstreamer-1.0", "$stage\licenses" | Out-Null
 
 Copy-Item "$bin\var.exe", "$bin\var-check.exe" $stage
 Copy-Item "LICENSE" "$stage\LICENSE.txt"
-Copy-Item "$GStreamerRoot\libexec\gstreamer-1.0\gst-plugin-scanner.exe" "$stage\libexec\gstreamer-1.0\"
+# Next to var.exe and the DLLs (not in libexec\gstreamer-1.0): Windows looks for a
+# program's DLLs in its own folder first, so the scanner can't pick up the DLLs of
+# another GStreamer installation from PATH.
+Copy-Item "$GStreamerRoot\libexec\gstreamer-1.0\gst-plugin-scanner.exe" $stage
 
 # Plugins the application uses. Not every plugin exists in every build (NVENC, Quick
 # Sync and AMF are x64 only).
@@ -165,7 +168,7 @@ cargo tree -p var-app -p var-check --target $rustTarget -e normal --prefix none 
 Copy-Item "packaging\windows\THIRD-PARTY-NOTICES.txt" $stage
 
 $msi = Join-Path $OutDir "var-for-trampoline-$version-$Arch.msi"
-wix build packaging\windows\var.wxs -arch $Arch -bindpath "stage=$stage" -d "Version=$version" -o $msi
+wix build packaging\windows\var.wxs -arch $Arch -bindpath "stage=$stage" -bindpath "assets=$(Join-Path $repo 'assets')" -d "Version=$version" -o $msi
 if ($LASTEXITCODE -ne 0) { throw "wix build failed" }
 
 $sizeMb = [math]::Round((Get-Item $msi).Length / 1MB)

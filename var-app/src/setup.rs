@@ -45,6 +45,8 @@ pub enum SetupAction {
     Help,
     /// Toggle the full screen window.
     WindowFullScreen,
+    /// Help → About.
+    About,
 }
 
 /// What the menu bar shows and changes.
@@ -110,9 +112,15 @@ pub fn menu_bar(ui: &mut egui::Ui, m: MenuBar<'_>) -> SetupAction {
             });
             ui.separator();
             let mut full_screen = window_full_screen;
+            // Locked: full screen can be switched on, but not off.
+            let can_toggle = !(locked && window_full_screen);
             if ui
-                .checkbox(&mut full_screen, "Full screen window  (F11)")
+                .add_enabled(
+                    can_toggle,
+                    egui::Checkbox::new(&mut full_screen, "Full screen window  (F11)"),
+                )
                 .on_hover_text("Hides the window's title bar and the Windows taskbar")
+                .on_disabled_hover_text("Settings are locked: full screen stays on")
                 .changed()
             {
                 action = SetupAction::WindowFullScreen;
@@ -139,6 +147,11 @@ pub fn menu_bar(ui: &mut egui::Ui, m: MenuBar<'_>) -> SetupAction {
         ui.menu_button("Help", |ui| {
             if ui.button("Keyboard shortcuts  (F1)").clicked() {
                 action = SetupAction::Help;
+                ui.close();
+            }
+            ui.separator();
+            if ui.button("About VAR for Trampoline").clicked() {
+                action = SetupAction::About;
                 ui.close();
             }
         });

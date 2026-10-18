@@ -10,7 +10,7 @@ Run once per OS with real capture cards. Record the result (✔ / ✘ and notes)
 |---|---|---|---|
 | Tester / date | | | |
 | Machine (CPU, GPU) | | | |
-| Renderer (window footer) | | | |
+| Renderer (Help → About) | | | |
 | MJPEG capture card (model) | | | |
 | YUY2 capture card (model) | | | |
 | HDMI source and output mode (1080p50 / 1080p60) | | | |

@@ -155,7 +155,16 @@ impl ControlServer {
         port: u16,
         handler: impl Fn(Command, SocketAddr) + Send + Sync + 'static,
     ) -> io::Result<Self> {
-        let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, port))?;
+        Self::start_on(listen_address(port), handler)
+    }
+
+    /// Like [`start`](Self::start), on a given address (tests: the loopback address,
+    /// which doesn't trigger the Windows Firewall prompt).
+    pub fn start_on(
+        address: SocketAddr,
+        handler: impl Fn(Command, SocketAddr) + Send + Sync + 'static,
+    ) -> io::Result<Self> {
+        let listener = TcpListener::bind(address)?;
         listener.set_nonblocking(true)?;
         let address = listener.local_addr()?;
         let stop = Arc::new(AtomicBool::new(false));
@@ -302,6 +311,12 @@ fn serve(
     Ok(())
 }
 
+/// The address the server listens on: all network interfaces, so Companion can run
+/// on another computer.
+pub fn listen_address(port: u16) -> SocketAddr {
+    SocketAddr::from((Ipv4Addr::UNSPECIFIED, port))
+}
+
 /// The computer's address in the local network, for showing where to connect
 /// Companion. Asks the OS which interface it would use; no data is sent. `None`
 /// without a network.
@@ -362,16 +377,15 @@ mod tests {
     #[test]
     fn serves_commands_over_tcp() {
         let received = Arc::new(Mutex::new(Vec::new()));
-        let server = ControlServer::start(0, {
+        // The application listens on all interfaces; the test on the loopback address
+        // only, so it doesn't trigger the Windows Firewall prompt.
+        assert!(listen_address(7450).ip().is_unspecified(), "all interfaces");
+        let server = ControlServer::start_on((Ipv4Addr::LOCALHOST, 0).into(), {
             let received = Arc::clone(&received);
             move |command, _| received.lock().unwrap().push(command)
         })
         .unwrap();
         let port = server.address().port();
-        assert!(
-            server.address().ip().is_unspecified(),
-            "listens on all interfaces"
-        );
 
         let stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
         let mut reader = BufReader::new(stream.try_clone().unwrap());

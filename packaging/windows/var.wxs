@@ -8,8 +8,15 @@
            Version="$(Version)"
            UpgradeCode="657469B4-F947-4B23-A3B5-AAA32483CF20"
            Scope="perMachine">
-    <MajorUpgrade DowngradeErrorMessage="A newer version of VAR for Trampoline is already installed." />
+    <!-- Same version replaces too, so test builds with an unchanged version number
+         don't end up installed twice. -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of VAR for Trampoline is already installed." />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <!-- Icon for the shortcuts and the "Installed apps" entry. -->
+    <Icon Id="VarIcon" SourceFile="!(bindpath.assets)\var.ico" />
+    <Property Id="ARPPRODUCTICON" Value="VarIcon" />
 
     <StandardDirectory Id="ProgramFiles6432Folder">
       <Directory Id="INSTALLFOLDER" Name="VAR for Trampoline" />
@@ -33,12 +40,14 @@
           <Shortcut Id="ApplicationShortcut"
                     Name="VAR for Trampoline"
                     Target="[INSTALLFOLDER]var.exe"
+                    Icon="VarIcon"
                     WorkingDirectory="INSTALLFOLDER" />
           <!-- For a first test of a machine without capture cards. -->
           <Shortcut Id="TestModeShortcut"
                     Name="VAR for Trampoline (test cameras)"
                     Description="Two synthetic test cameras and the debug overlay"
                     Target="[INSTALLFOLDER]var.exe"
+                    Icon="VarIcon"
                     Arguments="--synthetic-cameras 2 --debug-overlay"
                     WorkingDirectory="INSTALLFOLDER" />
           <RemoveFolder Id="RemoveProgramMenuVar" On="uninstall" />
@@ -53,6 +62,7 @@
         <Shortcut Id="DesktopApplicationShortcut"
                   Name="VAR for Trampoline"
                   Target="[INSTALLFOLDER]var.exe"
+                  Icon="VarIcon"
                   WorkingDirectory="INSTALLFOLDER" />
         <RegistryValue Root="HKLM" Key="Software\VAR for Trampoline"
                        Name="DesktopShortcut" Type="integer" Value="1" KeyPath="yes" />

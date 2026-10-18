@@ -9,6 +9,7 @@ pub mod index;
 pub mod logging;
 pub mod paths;
 pub mod resources;
+pub mod runtime;
 pub mod timing;
 
 /// Human-readable application name, used for window titles and directories.
