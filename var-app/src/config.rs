@@ -17,6 +17,10 @@ pub struct Config {
     pub recording_folder: Option<String>,
     pub segment_minutes: Option<u32>,
     pub debug_overlay: bool,
+    /// The window covers the whole screen (no title bar, no taskbar).
+    pub window_full_screen: bool,
+    /// Laser pointer trails fade out after this many seconds (DRW-002).
+    pub laser_seconds: Option<f32>,
     /// Disk space warnings below these remaining recording times, minutes (DSK-003).
     pub disk_warning_minutes: Option<[u32; 2]>,
     /// Argon2 hash of the PIN for unlocking (ROLE-006). Never the PIN itself.
@@ -102,6 +106,8 @@ mod tests {
             recording_folder: Some(r"D:\VAR".into()),
             segment_minutes: Some(10),
             debug_overlay: true,
+            window_full_screen: true,
+            laser_seconds: Some(5.0),
             disk_warning_minutes: Some([90, 20]),
             pin_hash: Some("$argon2id$v=19$m=19456,t=2,p=1$c2FsdHNhbHQ$aGFzaA".into()),
             remote_control: Some(RemoteControlConfig {

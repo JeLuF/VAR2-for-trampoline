@@ -56,6 +56,11 @@ impl ReviewMode {
         &mut self.player
     }
 
+    /// How many seconds laser pointer trails stay (DRW-002).
+    pub fn set_drawing_lifetime(&mut self, seconds: f32) {
+        self.drawing.set_lifetime(seconds);
+    }
+
     /// Advances playback and lets the drawing fade; call once per UI frame.
     pub fn tick(&mut self) {
         self.player.tick();

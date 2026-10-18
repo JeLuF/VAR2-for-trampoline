@@ -43,6 +43,8 @@ pub enum SetupAction {
     Quit,
     /// Show the keyboard shortcuts (INP-002).
     Help,
+    /// Toggle the full screen window.
+    WindowFullScreen,
 }
 
 /// What the menu bar shows and changes.
@@ -55,6 +57,10 @@ pub struct MenuBar<'a> {
     pub locked: bool,
     pub has_pin: bool,
     pub debug_overlay: &'a mut bool,
+    /// The window covers the whole screen.
+    pub window_full_screen: bool,
+    /// Laser pointer trails fade out after this many seconds.
+    pub laser_seconds: &'a mut f32,
     pub camera_count: &'a mut usize,
     pub synthetic_cameras: u32,
     pub reviewing: bool,
@@ -71,6 +77,8 @@ pub fn menu_bar(ui: &mut egui::Ui, m: MenuBar<'_>) -> SetupAction {
         locked,
         has_pin,
         debug_overlay,
+        window_full_screen,
+        laser_seconds,
         camera_count,
         synthetic_cameras,
         reviewing,
@@ -101,7 +109,31 @@ pub fn menu_bar(ui: &mut egui::Ui, m: MenuBar<'_>) -> SetupAction {
                 });
             });
             ui.separator();
+            let mut full_screen = window_full_screen;
+            if ui
+                .checkbox(&mut full_screen, "Full screen window  (F11)")
+                .on_hover_text("Hides the window's title bar and the Windows taskbar")
+                .changed()
+            {
+                action = SetupAction::WindowFullScreen;
+            }
             ui.checkbox(debug_overlay, "Debug overlay");
+            ui.separator();
+            // DRW-002: how long the laser pointer trails stay in review.
+            ui.horizontal(|ui| {
+                ui.label("Laser pointer fades after");
+                ui.add(
+                    egui::DragValue::new(laser_seconds)
+                        .range(crate::drawing::LIFETIME_RANGE_S)
+                        .speed(0.1)
+                        .fixed_decimals(1)
+                        .suffix(" s"),
+                )
+                .on_hover_text(
+                    "Trails drawn with the mouse in review stay this long; they fade out \
+                     during the last second",
+                );
+            });
         });
         markers_menu(ui, recorder, &mut action);
         ui.menu_button("Help", |ui| {

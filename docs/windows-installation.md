@@ -27,6 +27,7 @@ The laptop must run on mains power during tests and events.
 ## Test on the competition hardware
 
 1. **Test cameras:** start "VAR for Trampoline (test cameras)". Both tiles show colour bars with a frame counter and clock. Start recording, press R (review), Space, ←/→, Shift+Space (reverse). Recording menu → *Encoder* shows the encoder in use (should be *hardware*: NVIDIA NVENC, Intel Quick Sync, AMD AMF or Media Foundation).
+   F11 (or View → Full screen window) hides the title bar and the taskbar; the setting is kept for the next start.
 2. **Real cameras:** start "VAR for Trampoline", right-click each tile → device and mode (1080p50 or 1080p60). Debug overlay (View menu) shows the frame rate and dropped frames per camera.
 3. **Short recording:** record 10 minutes while using review now and then; then check the recording in a terminal:
 

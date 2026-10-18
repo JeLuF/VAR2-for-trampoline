@@ -1,5 +1,6 @@
 //! Laser pointer drawing in review mode (DRW-001 – DRW-003): dragging with the mouse
-//! over a camera draws a glowing trail that fades out after about 3 seconds.
+//! over a camera draws a glowing trail that fades out after a configurable time
+//! (default 3 seconds).
 //!
 //! The trails are a display overlay only: they live in memory, are painted on top of
 //! the video and are never written anywhere (DRW-003).
@@ -8,9 +9,11 @@ use std::time::{Duration, Instant};
 
 use eframe::egui::{self, Color32, Pos2, Rect, Shape, Stroke};
 
-/// A point of a trail disappears this long after it was drawn (DRW-002)...
-const LIFETIME: Duration = Duration::from_secs(3);
-/// ...fading out over this last part of its lifetime.
+/// A point of a trail disappears this long after it was drawn, by default (DRW-002)...
+pub const DEFAULT_LIFETIME_S: f32 = 3.0;
+/// ...configurable in this range.
+pub const LIFETIME_RANGE_S: std::ops::RangeInclusive<f32> = 0.5..=30.0;
+/// It fades out over this last part of its lifetime, at most half of it.
 const FADE: Duration = Duration::from_millis(1000);
 /// Points closer than this to the previous one (screen points) are skipped.
 const MIN_DISTANCE: f32 = 1.5;
@@ -28,14 +31,32 @@ struct Trail {
     points: Vec<(Pos2, Instant)>,
 }
 
-#[derive(Default)]
 pub struct Drawing {
     trails: Vec<Trail>,
     /// The last trail is still being drawn.
     drawing: bool,
+    /// How long a point of a trail stays (DRW-002).
+    lifetime: Duration,
+}
+
+impl Default for Drawing {
+    fn default() -> Self {
+        Drawing {
+            trails: Vec::new(),
+            drawing: false,
+            lifetime: Duration::from_secs_f32(DEFAULT_LIFETIME_S),
+        }
+    }
 }
 
 impl Drawing {
+    /// Sets how many seconds a trail stays before it is gone (clamped to
+    /// [`LIFETIME_RANGE_S`]); also for trails already drawn.
+    pub fn set_lifetime(&mut self, seconds: f32) {
+        let seconds = seconds.clamp(*LIFETIME_RANGE_S.start(), *LIFETIME_RANGE_S.end());
+        self.lifetime = Duration::from_secs_f32(seconds);
+    }
+
     /// Follows a drag with the primary mouse button on the tile of `slot`, whose video
     /// picture is at `video`.
     pub fn input(&mut self, slot: usize, response: &egui::Response, video: Rect) {
@@ -93,7 +114,7 @@ impl Drawing {
             any = true;
             if let [(point, time)] = trail.points.as_slice() {
                 // A single point: a dot.
-                let alpha = opacity(now.duration_since(*time));
+                let alpha = opacity(now.duration_since(*time), self.lifetime);
                 painter.circle_filled(to_screen(*point), GLOW_WIDTH / 2.0, glow(alpha));
                 painter.circle_filled(to_screen(*point), CORE_WIDTH / 2.0, core(alpha));
                 continue;
@@ -103,7 +124,9 @@ impl Drawing {
             let mut run: Vec<Pos2> = Vec::new();
             let mut run_alpha = None;
             for (point, time) in &trail.points {
-                let alpha = (opacity(now.duration_since(*time)) * ALPHA_STEPS).ceil() / ALPHA_STEPS;
+                let alpha = (opacity(now.duration_since(*time), self.lifetime) * ALPHA_STEPS)
+                    .ceil()
+                    / ALPHA_STEPS;
                 let pos = to_screen(*point);
                 if run_alpha.is_some_and(|a| a != alpha) {
                     draw_run(painter, &run, run_alpha.unwrap());
@@ -126,10 +149,11 @@ impl Drawing {
     /// Removes faded points and trails. Call once per frame.
     pub fn prune(&mut self) {
         let now = Instant::now();
+        let lifetime = self.lifetime;
         for trail in &mut self.trails {
             trail
                 .points
-                .retain(|(_, time)| now.duration_since(*time) < LIFETIME);
+                .retain(|(_, time)| now.duration_since(*time) < lifetime);
         }
         let count = self.trails.len();
         let drawing = self.drawing;
@@ -161,10 +185,12 @@ fn draw_run(painter: &egui::Painter, points: &[Pos2], alpha: f32) {
     ));
 }
 
-/// Opacity of a point of this age: full, then fading out over [`FADE`].
-fn opacity(age: Duration) -> f32 {
-    let left = LIFETIME.saturating_sub(age);
-    (left.as_secs_f32() / FADE.as_secs_f32()).clamp(0.0, 1.0)
+/// Opacity of a point of this age: full, then fading out over [`FADE`] (at most half
+/// the lifetime) until the end of its lifetime.
+fn opacity(age: Duration, lifetime: Duration) -> f32 {
+    let fade = FADE.min(lifetime / 2);
+    let left = lifetime.saturating_sub(age);
+    (left.as_secs_f32() / fade.as_secs_f32()).clamp(0.0, 1.0)
 }
 
 fn core(alpha: f32) -> Color32 {
@@ -181,11 +207,44 @@ mod tests {
 
     #[test]
     fn opacity_fades_in_the_last_second() {
-        assert_eq!(opacity(Duration::ZERO), 1.0);
-        assert_eq!(opacity(Duration::from_millis(2000)), 1.0);
-        assert!((opacity(Duration::from_millis(2500)) - 0.5).abs() < 1e-3);
-        assert_eq!(opacity(Duration::from_millis(3000)), 0.0);
-        assert_eq!(opacity(Duration::from_secs(10)), 0.0);
+        let lifetime = Duration::from_secs(3);
+        let at = |ms| opacity(Duration::from_millis(ms), lifetime);
+        assert_eq!(at(0), 1.0);
+        assert_eq!(at(2000), 1.0);
+        assert!((at(2500) - 0.5).abs() < 1e-3);
+        assert_eq!(at(3000), 0.0);
+        assert_eq!(at(10_000), 0.0);
+
+        // Longer lifetime: still fades over the last second.
+        let long = Duration::from_secs(10);
+        assert_eq!(opacity(Duration::from_millis(9000), long), 1.0);
+        assert!((opacity(Duration::from_millis(9500), long) - 0.5).abs() < 1e-3);
+        // Short lifetime: fades over its second half.
+        let short = Duration::from_millis(600);
+        assert_eq!(opacity(Duration::from_millis(300), short), 1.0);
+        assert!((opacity(Duration::from_millis(450), short) - 0.5).abs() < 1e-3);
+        assert_eq!(opacity(Duration::from_millis(600), short), 0.0);
+    }
+
+    #[test]
+    fn lifetime_applies_to_existing_trails_and_is_clamped() {
+        let mut drawing = Drawing::default();
+        let drawn = Instant::now() - Duration::from_secs(5);
+        drawing.trails.push(Trail {
+            slot: 0,
+            points: vec![(Pos2::new(0.1, 0.1), drawn)],
+        });
+        drawing.set_lifetime(10.0);
+        drawing.prune();
+        assert_eq!(drawing.trails.len(), 1, "5 s old, kept for 10 s");
+        drawing.set_lifetime(4.0);
+        drawing.prune();
+        assert!(drawing.trails.is_empty(), "5 s old, gone after 4 s");
+
+        drawing.set_lifetime(0.0);
+        assert_eq!(drawing.lifetime, Duration::from_millis(500));
+        drawing.set_lifetime(100.0);
+        assert_eq!(drawing.lifetime, Duration::from_secs(30));
     }
 
     #[test]
@@ -214,6 +273,7 @@ mod tests {
                 points: Vec::new(),
             }],
             drawing: true,
+            ..Drawing::default()
         };
         drawing.prune();
         assert_eq!(drawing.trails.len(), 1);

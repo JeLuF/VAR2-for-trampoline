@@ -10,6 +10,7 @@ use var_capture::{DeviceInfo, DeviceWatcher, WatcherOptions, synthetic};
 
 use crate::config::{self, CameraConfig, Config, RemoteControlConfig};
 use crate::disk::{self, DiskMonitor, Level};
+use crate::drawing;
 use crate::inhibit::SleepInhibitor;
 use crate::live;
 use crate::live::{LiveCamera, Selection};
@@ -70,6 +71,14 @@ pub struct VarApp {
     remote: RemoteControl,
     /// The keyboard shortcut overlay is shown (F1, INP-002).
     help_open: bool,
+    /// The window covers the whole screen, without title bar and taskbar.
+    window_full_screen: bool,
+    /// The saved window mode was applied to the window (first frame).
+    window_mode_applied: bool,
+    /// Full screen state last reported by the window.
+    observed_full_screen: Option<bool>,
+    /// Laser pointer trails fade out after this many seconds (DRW-002).
+    laser_seconds: f32,
     dialog: Option<Dialog>,
     pin_input: PinInput,
     /// Quitting was confirmed; the next close request is let through.
@@ -255,6 +264,16 @@ impl VarApp {
             resource_monitor: ResourceMonitor::new(options.resource_log_interval),
             remote,
             help_open: false,
+            window_full_screen: config.window_full_screen,
+            window_mode_applied: false,
+            observed_full_screen: None,
+            laser_seconds: config
+                .laser_seconds
+                .unwrap_or(drawing::DEFAULT_LIFETIME_S)
+                .clamp(
+                    *drawing::LIFETIME_RANGE_S.start(),
+                    *drawing::LIFETIME_RANGE_S.end(),
+                ),
             dialog: None,
             pin_input: PinInput::default(),
             quit_confirmed: false,
@@ -321,6 +340,8 @@ impl VarApp {
             recording_folder: Some(self.recorder.folder.clone()),
             segment_minutes: Some((self.recorder.segment_length.as_secs() / 60).max(1) as u32),
             debug_overlay: self.debug_overlay,
+            window_full_screen: self.window_full_screen,
+            laser_seconds: Some(self.laser_seconds),
             disk_warning_minutes: Some(self.disk.warning_minutes),
             pin_hash: self.lock.pin_hash().map(str::to_owned),
             remote_control: Some(self.remote.settings),
@@ -390,6 +411,7 @@ impl VarApp {
             Action::ExitFullScreen if self.help_open => self.help_open = false,
             Action::ExitFullScreen => self.full_screen = None,
             Action::Help => self.help_open = !self.help_open,
+            Action::WindowFullScreen => self.set_window_full_screen(!self.window_full_screen, ctx),
             Action::Pause => {
                 if let Some(review) = &mut self.review {
                     review.player().pause();
@@ -451,6 +473,14 @@ impl VarApp {
                 }
             }
         }
+    }
+
+    /// Full screen window: no title bar, the taskbar hidden. The menu bar of the
+    /// application stays, with the recording status (VIEW-005).
+    fn set_window_full_screen(&mut self, on: bool, ctx: &egui::Context) {
+        info!(on, "full screen window");
+        self.window_full_screen = on;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(on));
     }
 
     /// Shows the recording at `wall_us` (marker list, next/previous marker).
@@ -930,6 +960,24 @@ impl eframe::App for VarApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         }
 
+        // The saved window mode on the first frame; afterwards follow the window, in
+        // case the OS ended full screen (e.g. a display change).
+        if !self.window_mode_applied {
+            self.window_mode_applied = true;
+            if self.window_full_screen {
+                self.set_window_full_screen(true, ctx);
+            }
+        }
+        if let Some(actual) = ctx.input(|i| i.viewport().fullscreen)
+            && self.observed_full_screen != Some(actual)
+        {
+            // Only a change of the window's state counts: right after a toggle, the
+            // window may still report the old state for a few frames.
+            if self.observed_full_screen.is_some() {
+                self.window_full_screen = actual;
+            }
+            self.observed_full_screen = Some(actual);
+        }
         self.unplug_cycle();
         let devices = self.devices.devices();
         self.select_pending_cameras(&devices);
@@ -967,6 +1015,7 @@ impl eframe::App for VarApp {
             self.review = None;
         }
         if let Some(review) = &mut self.review {
+            review.set_drawing_lifetime(self.laser_seconds);
             review.tick();
         }
 
@@ -982,6 +1031,8 @@ impl eframe::App for VarApp {
                     locked: self.lock.is_locked(),
                     has_pin: self.lock.has_pin(),
                     debug_overlay: &mut self.debug_overlay,
+                    window_full_screen: self.window_full_screen,
+                    laser_seconds: &mut self.laser_seconds,
                     camera_count: &mut camera_count,
                     synthetic_cameras: self.synthetic_cameras,
                     reviewing: self.review.is_some(),
@@ -994,6 +1045,9 @@ impl eframe::App for VarApp {
                 SetupAction::StopRequested => {}
                 SetupAction::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
                 SetupAction::Help => self.help_open = true,
+                SetupAction::WindowFullScreen => {
+                    self.set_window_full_screen(!self.window_full_screen, ctx);
+                }
                 SetupAction::Lock
                 | SetupAction::UnlockRequested
                 | SetupAction::SetPinRequested

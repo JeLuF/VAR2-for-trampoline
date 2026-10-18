@@ -32,6 +32,8 @@ pub enum Action {
     ExitFullScreen,
     /// Show / hide the keyboard shortcuts (INP-002).
     Help,
+    /// Window full screen: no title bar, no taskbar.
+    WindowFullScreen,
 }
 
 /// One line of the help: keys and description, and the key bindings behind it.
@@ -139,6 +141,11 @@ pub const SHORTCUTS: &[Shortcut] = &[
         description: "Show / hide the keyboard shortcuts",
         bindings: &[(NONE, Key::F1, Action::Help)],
     },
+    Shortcut {
+        keys: "F11",
+        description: "Full screen window (hides title bar and taskbar)",
+        bindings: &[(NONE, Key::F11, Action::WindowFullScreen)],
+    },
 ];
 
 /// The help overlay (INP-002): all of [`SHORTCUTS`], as a table.
@@ -200,7 +207,8 @@ fn needs_shortcut(action: Action) -> bool {
         | Action::NextMarker
         | Action::FullScreen(_)
         | Action::ExitFullScreen
-        | Action::Help => true,
+        | Action::Help
+        | Action::WindowFullScreen => true,
     }
 }
 
@@ -224,6 +232,7 @@ mod tests {
             Action::NextMarker,
             Action::ExitFullScreen,
             Action::Help,
+            Action::WindowFullScreen,
         ];
         actions.extend([-1, 1].map(Action::Step));
         actions.extend([-60, -10, -1, 1, 10, 60].map(Action::Jump));
