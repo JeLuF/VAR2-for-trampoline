@@ -1,0 +1,184 @@
+# Release build: runs when a GitHub release is published (and by hand via "Run
+# workflow"). Builds the Windows installer and the Linux and macOS binaries, runs
+# smoke tests only, and attaches the files to the release.
+#
+# The long tests (recording, review, endurance) are not run here; run them locally:
+#   cargo test --workspace --release   (see README, "Tests and checks")
+
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write # attach files to the release
+
+env:
+  CARGO_TERM_COLOR: always
+  GSTREAMER_VERSION: "1.28.6"
+  # Quick unit tests: no camera, encoder or decoder pipelines.
+  SMOKE_TESTS: --lib -p var-core -p var-control -p var-check
+
+jobs:
+  version:
+    name: Version check
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        name: Release tag matches Cargo.toml
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Cargo.toml version: $version"
+          if [ "${{ github.event_name }}" = "release" ]; then
+            tag="${{ github.event.release.tag_name }}"
+            if [ "${tag#v}" != "$version" ]; then
+              echo "::error::Release tag $tag does not match the version $version in Cargo.toml"
+              exit 1
+            fi
+          fi
+
+  licenses:
+    name: Licence check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check licenses bans sources
+
+  windows:
+    name: Windows installer (x64)
+    needs: [version, licenses]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GStreamer (MSVC x86_64, with development files)
+        shell: pwsh
+        run: |
+          $installer = "gstreamer-1.0-msvc-x86_64-$env:GSTREAMER_VERSION.exe"
+          $url = "https://gstreamer.freedesktop.org/data/pkg/windows/$env:GSTREAMER_VERSION/msvc/$installer"
+          Invoke-WebRequest $url -OutFile "$env:RUNNER_TEMP\$installer"
+          $dir = "C:\gstreamer\1.0\msvc_x86_64"
+          Start-Process "$env:RUNNER_TEMP\$installer" -Wait -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$dir"
+          if (-not (Test-Path "$dir\lib\pkgconfig\gstreamer-1.0.pc")) { throw "GStreamer development files missing in $dir" }
+          "$dir\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "PKG_CONFIG_PATH=$dir\lib\pkgconfig" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install WiX Toolset
+        run: dotnet tool install --global wix --version 5.0.2
+
+      - name: Build MSI
+        shell: pwsh
+        run: ./packaging/windows/build-msi.ps1 -Arch x64 -GStreamerRoot C:\gstreamer\1.0\msvc_x86_64
+
+      - name: Smoke test (installer contents, start without system GStreamer)
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem target\msi\*-x64.msi | Select-Object -First 1
+          $target = "$env:RUNNER_TEMP\msi"
+          $p = Start-Process msiexec -ArgumentList "/a", "`"$($msi.FullName)`"", "/qn", "TARGETDIR=`"$target`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec /a failed: $($p.ExitCode)" }
+          $exe = Get-ChildItem $target -Recurse -Filter var.exe | Select-Object -First 1
+          $dir = $exe.DirectoryName
+          foreach ($file in "var-check.exe", "gst-plugin-scanner.exe", "gstreamer-1.0-0.dll", "vcruntime140.dll",
+                            "lib\gstreamer-1.0\gstcoreelements.dll", "lib\gstreamer-1.0\gstplayback.dll",
+                            "lib\gstreamer-1.0\gstmediafoundation.dll", "THIRD-PARTY-NOTICES.txt") {
+            if (-not (Test-Path (Join-Path $dir $file))) { throw "missing in the installer: $file" }
+          }
+          # Without GStreamer on PATH: everything must come from the installer.
+          $env:PATH = "C:\Windows\System32;C:\Windows"
+          foreach ($program in "var.exe", "var-check.exe") {
+            $p = Start-Process (Join-Path $dir $program) -ArgumentList "--version" -Wait -PassThru -NoNewWindow
+            if ($p.ExitCode -ne 0) { throw "$program --version failed: $($p.ExitCode)" }
+          }
+
+      - name: Unit tests (quick)
+        shell: pwsh
+        run: cargo test --release --locked $env:SMOKE_TESTS.Split(' ')
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: target/msi/*.msi
+
+      - name: Attach to the release
+        if: github.event_name == 'release'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" (Get-ChildItem target\msi\*.msi).FullName --clobber
+
+  unix:
+    name: ${{ matrix.name }}
+    needs: [version, licenses]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux (x86_64)
+            os: ubuntu-latest
+            archive: linux-x86_64
+          - name: macOS (Apple silicon)
+            os: macos-14
+            archive: macos-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GStreamer (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
+            gstreamer1.0-libav \
+            libxkbcommon-dev libwayland-dev
+
+      - name: Install GStreamer (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install gstreamer pkgconf
+          echo "PKG_CONFIG_PATH=$(brew --prefix)/lib/pkgconfig" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --locked --bin var --bin var-check
+
+      - name: Smoke test
+        run: |
+          ./target/release/var --version
+          ./target/release/var-check --version
+
+      - name: Unit tests (quick)
+        run: cargo test --release --locked $SMOKE_TESTS
+
+      - name: Package
+        run: |
+          name="var-for-trampoline-${{ needs.version.outputs.version }}-${{ matrix.archive }}"
+          mkdir -p "dist/$name"
+          cp target/release/var target/release/var-check LICENSE README.md "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive }}
+          path: dist/*.tar.gz
+
+      - name: Attach to the release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/*.tar.gz --clobber
