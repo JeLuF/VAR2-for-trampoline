@@ -77,6 +77,11 @@ jobs:
       - name: Install WiX Toolset
         run: dotnet tool install --global wix --version 5.0.2
 
+      # The version in Cargo.toml may have been raised without updating Cargo.lock:
+      # update only the project's own entries; dependency versions stay as locked.
+      - name: Update the project's version in Cargo.lock
+        run: cargo update --workspace
+
       - name: Build MSI
         shell: pwsh
         run: ./packaging/windows/build-msi.ps1 -Arch x64 -GStreamerRoot C:\gstreamer\1.0\msvc_x86_64
@@ -153,6 +158,11 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+
+      # The version in Cargo.toml may have been raised without updating Cargo.lock:
+      # update only the project's own entries; dependency versions stay as locked.
+      - name: Update the project's version in Cargo.lock
+        run: cargo update --workspace
 
       - name: Build
         run: cargo build --release --locked --bin var --bin var-check
