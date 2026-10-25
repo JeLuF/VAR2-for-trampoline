@@ -47,6 +47,7 @@ The laptop must run on mains power during tests and events.
 
    `--review-exercise` performs a random review action every 2 s; `--record-seconds` starts recording as soon as the cameras are live and stops after the time. The cameras selected last are used.
 5. **Remote control (optional):** see [remote-control.md](remote-control.md). Windows Firewall asks on first use; allow private networks.
+6. **Stream to OBS (optional, x64 only):** set up OBS as in [streaming.md](streaming.md), then Stream menu → SRT URL `srt://<OBS computer>:9000` → Start streaming. Check the delay in OBS and, with the debug overlay, that the cameras drop no frames while streaming and recording.
 
 Please send the log file of each test run (and the `var-check` output) back for evaluation.
 

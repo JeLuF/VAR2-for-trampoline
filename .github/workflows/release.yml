@@ -53,19 +53,33 @@ jobs:
           command: check licenses bans sources
 
   windows:
-    name: Windows installer (x64)
+    name: Windows installer (${{ matrix.arch }})
     needs: [version, licenses]
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+            gstreamer: x86_64
+          # Native ARM64 runner (free for public repositories): built and smoke
+          # tested on ARM64 itself.
+          - arch: arm64
+            runner: windows-11-arm
+            gstreamer: arm64
+    runs-on: ${{ matrix.runner }}
+    env:
+      GSTREAMER_ROOT: C:\gstreamer\1.0\msvc_${{ matrix.gstreamer }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install GStreamer (MSVC x86_64, with development files)
+      - name: Install GStreamer (MSVC ${{ matrix.gstreamer }}, with development files)
         shell: pwsh
         run: |
-          $installer = "gstreamer-1.0-msvc-x86_64-$env:GSTREAMER_VERSION.exe"
+          $installer = "gstreamer-1.0-msvc-${{ matrix.gstreamer }}-$env:GSTREAMER_VERSION.exe"
           $url = "https://gstreamer.freedesktop.org/data/pkg/windows/$env:GSTREAMER_VERSION/msvc/$installer"
           Invoke-WebRequest $url -OutFile "$env:RUNNER_TEMP\$installer"
-          $dir = "C:\gstreamer\1.0\msvc_x86_64"
+          $dir = $env:GSTREAMER_ROOT
           Start-Process "$env:RUNNER_TEMP\$installer" -Wait -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$dir"
           if (-not (Test-Path "$dir\lib\pkgconfig\gstreamer-1.0.pc")) { throw "GStreamer development files missing in $dir" }
           "$dir\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
@@ -84,12 +98,12 @@ jobs:
 
       - name: Build MSI
         shell: pwsh
-        run: ./packaging/windows/build-msi.ps1 -Arch x64 -GStreamerRoot C:\gstreamer\1.0\msvc_x86_64
+        run: ./packaging/windows/build-msi.ps1 -Arch ${{ matrix.arch }} -GStreamerRoot $env:GSTREAMER_ROOT
 
       - name: Smoke test (installer contents, start without system GStreamer)
         shell: pwsh
         run: |
-          $msi = Get-ChildItem target\msi\*-x64.msi | Select-Object -First 1
+          $msi = Get-ChildItem target\msi\*-${{ matrix.arch }}.msi | Select-Object -First 1
           $target = "$env:RUNNER_TEMP\msi"
           $p = Start-Process msiexec -ArgumentList "/a", "`"$($msi.FullName)`"", "/qn", "TARGETDIR=`"$target`"" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "msiexec /a failed: $($p.ExitCode)" }
@@ -113,7 +127,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: windows-x64
+          name: windows-${{ matrix.arch }}
           path: target/msi/*.msi
 
       - name: Attach to the release
@@ -121,7 +135,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" (Get-ChildItem target\msi\*.msi).FullName --clobber
+        run: gh release upload "${{ github.event.release.tag_name }}" (Get-ChildItem target\msi\*-${{ matrix.arch }}.msi).FullName --clobber
 
   unix:
     name: ${{ matrix.name }}

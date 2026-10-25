@@ -9,6 +9,7 @@ use crate::disk::{DiskMonitor, Level, format_bytes, format_remaining};
 use crate::live::{CameraStatus, LiveCamera, Selection};
 use crate::recording::{EncoderState, Recorder, format_elapsed};
 use crate::remote::RemoteControl;
+use crate::streaming::{StreamControl, StreamStatus};
 
 const LIVE_COLOR: Color32 = Color32::from_rgb(0x3c, 0xa0, 0x5a);
 pub const ERROR_COLOR: Color32 = Color32::from_rgb(0xe0, 0x50, 0x50);
@@ -55,6 +56,7 @@ pub struct MenuBar<'a> {
     pub recorder: &'a mut Recorder,
     pub disk: &'a mut DiskMonitor,
     pub remote: &'a mut RemoteControl,
+    pub stream: &'a mut StreamControl,
     /// Locked mode: setup, start/stop and quitting are unavailable (ROLE-004).
     pub locked: bool,
     pub has_pin: bool,
@@ -76,6 +78,7 @@ pub fn menu_bar(ui: &mut egui::Ui, m: MenuBar<'_>) -> SetupAction {
         recorder,
         disk,
         remote,
+        stream,
         locked,
         has_pin,
         debug_overlay,
@@ -96,6 +99,12 @@ pub fn menu_bar(ui: &mut egui::Ui, m: MenuBar<'_>) -> SetupAction {
                 .ui(ui, |ui| {
                     recording_menu(ui, cameras, recorder, disk, remote, &mut action)
                 })
+                .0
+                .on_disabled_hover_text("Settings are locked");
+            // Stream settings and start/stop are locked as well.
+            MenuButton::new("Stream")
+                .config(MenuConfig::new().close_behavior(PopupCloseBehavior::CloseOnClickOutside))
+                .ui(ui, |ui| stream_menu(ui, cameras, recorder, stream))
                 .0
                 .on_disabled_hover_text("Settings are locked");
         });
@@ -187,6 +196,7 @@ pub fn menu_bar(ui: &mut egui::Ui, m: MenuBar<'_>) -> SetupAction {
                 ui.separator();
             }
             recording_status(ui, cameras, recorder, disk);
+            stream_status(ui, stream);
         });
     });
     action
@@ -505,6 +515,167 @@ fn recording_menu(
         *action = SetupAction::Quit;
         ui.close();
     }
+}
+
+/// The Stream menu: SRT stream of one camera, e.g. into OBS. Locked in locked mode.
+fn stream_menu(
+    ui: &mut egui::Ui,
+    cameras: &[LiveCamera],
+    recorder: &Recorder,
+    stream: &mut StreamControl,
+) {
+    ui.set_min_width(420.0);
+    if !stream.available {
+        ui.colored_label(
+            WARNING_COLOR,
+            "Streaming is not available: this GStreamer has no SRT support \
+             (e.g. the Windows ARM64 build).",
+        );
+        return;
+    }
+    let running = stream.is_running();
+
+    // Status and start / stop.
+    ui.horizontal(|ui| {
+        if running {
+            if ui.button("Stop streaming").clicked() {
+                stream.stop(cameras);
+            }
+        } else if ui.button("Start streaming").clicked() {
+            let encoder = match recorder.encoder() {
+                EncoderState::Found(encoder) => Some(encoder),
+                _ => None,
+            };
+            stream.start(encoder.as_ref(), cameras);
+        }
+        let (text, color) = stream_status_text(stream);
+        ui.label(RichText::new(text).color(color.unwrap_or(ui.visuals().text_color())));
+    });
+    if let Some(error) = &stream.start_error {
+        ui.colored_label(ERROR_COLOR, error);
+    }
+    ui.separator();
+
+    egui::Grid::new("stream settings")
+        .num_columns(2)
+        .spacing([12.0, 6.0])
+        .show(ui, |ui| {
+            // The camera can be switched while streaming.
+            ui.label("Camera");
+            ui.horizontal(|ui| {
+                let before = stream.settings.camera;
+                for slot in 0..cameras.len() {
+                    ui.radio_value(&mut stream.settings.camera, slot, (slot + 1).to_string());
+                }
+                if running && stream.settings.camera != before {
+                    // Restart with the new camera's frame rate.
+                    stream.stop(cameras);
+                    let encoder = match recorder.encoder() {
+                        EncoderState::Found(encoder) => Some(encoder),
+                        _ => None,
+                    };
+                    stream.start(encoder.as_ref(), cameras);
+                }
+            });
+            ui.end_row();
+
+            ui.add_enabled_ui(!running, |ui| ui.label("SRT URL"));
+            ui.add_enabled_ui(!running, |ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut stream.settings.url)
+                        .hint_text("srt://192.168.1.20:9000")
+                        .desired_width(280.0),
+                )
+                .on_hover_text(
+                    "srt://<OBS computer>:<port>: this computer connects to OBS.\n\
+                     srt://:<port>?mode=listener: OBS connects to this computer.\n\
+                     Further SRT options can follow, e.g. &streamid=…",
+                );
+            });
+            ui.end_row();
+
+            ui.add_enabled_ui(!running, |ui| ui.label("Latency"));
+            ui.add_enabled_ui(!running, |ui| {
+                ui.add(
+                    egui::DragValue::new(&mut stream.settings.latency_ms)
+                        .range(20..=8000)
+                        .suffix(" ms"),
+                )
+                .on_hover_text(
+                    "SRT buffer for retransmissions. 120 ms suits a wired local network; \
+                     more for Wi-Fi. The larger of sender's and receiver's latency applies.",
+                );
+            });
+            ui.end_row();
+
+            ui.add_enabled_ui(!running, |ui| ui.label("Bitrate"));
+            ui.add_enabled_ui(!running, |ui| {
+                ui.add(
+                    egui::DragValue::new(&mut stream.settings.bitrate_mbps)
+                        .range(1.0..=50.0)
+                        .speed(0.1)
+                        .fixed_decimals(1)
+                        .suffix(" Mbit/s"),
+                );
+            });
+            ui.end_row();
+
+            ui.add_enabled_ui(!running, |ui| ui.label("Passphrase"));
+            ui.add_enabled_ui(!running, |ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut stream.settings.passphrase)
+                        .password(true)
+                        .hint_text("optional, 10–79 characters")
+                        .desired_width(280.0),
+                )
+                .on_hover_text("Encrypts the stream; OBS needs the same passphrase.");
+            });
+            ui.end_row();
+        });
+
+    ui.separator();
+    ui.label(RichText::new("In OBS").strong());
+    ui.weak(
+        "Sources > + > Media Source; untick \"Local File\"; \
+         Input: srt://0.0.0.0:9000?mode=listener (add &passphrase=... if set); \
+         Input Format: mpegts. Then stream here to srt://<OBS computer>:9000.",
+    );
+}
+
+/// Text and colour of the stream state.
+fn stream_status_text(stream: &StreamControl) -> (String, Option<Color32>) {
+    let camera = stream.settings.camera + 1;
+    match stream.status() {
+        StreamStatus::Off => ("Not streaming".into(), None),
+        StreamStatus::Connecting => (format!("Camera {camera}: connecting…"), Some(WARNING_COLOR)),
+        StreamStatus::WaitingForReceiver => (
+            format!("Camera {camera}: waiting for the receiver to connect"),
+            Some(WARNING_COLOR),
+        ),
+        StreamStatus::Streaming { bitrate } => (
+            format!("Streaming camera {camera}, {:.1} Mbit/s", bitrate / 1e6),
+            Some(LIVE_COLOR),
+        ),
+        StreamStatus::Retrying(e) => (format!("Camera {camera}: {e}; retrying"), Some(ERROR_COLOR)),
+    }
+}
+
+/// Stream state in the menu bar, while streaming.
+fn stream_status(ui: &mut egui::Ui, stream: &StreamControl) {
+    let (text, color) = match stream.status() {
+        StreamStatus::Off => return,
+        StreamStatus::Streaming { .. } => ("SRT", LIVE_COLOR),
+        StreamStatus::Connecting | StreamStatus::WaitingForReceiver => ("SRT ...", WARNING_COLOR),
+        StreamStatus::Retrying(_) => ("SRT error", ERROR_COLOR),
+    };
+    let (hover, _) = stream_status_text(stream);
+    ui.label(
+        RichText::new(format!("{text} cam {}", stream.settings.camera + 1))
+            .strong()
+            .color(color),
+    )
+    .on_hover_text(hover);
+    ui.separator();
 }
 
 /// Color of the remaining recording time by warning level.

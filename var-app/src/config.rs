@@ -27,6 +27,8 @@ pub struct Config {
     pub pin_hash: Option<String>,
     /// Remote control for Bitfocus Companion (INP-003); off by default.
     pub remote_control: Option<RemoteControlConfig>,
+    /// SRT stream settings (not whether it runs: streaming is started by hand).
+    pub stream: Option<crate::streaming::StreamConfig>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,6 +115,13 @@ mod tests {
             remote_control: Some(RemoteControlConfig {
                 enabled: true,
                 port: 7450,
+            }),
+            stream: Some(crate::streaming::StreamConfig {
+                url: "srt://192.168.1.20:9000".into(),
+                latency_ms: 200,
+                passphrase: "0123456789".into(),
+                bitrate_mbps: 6.0,
+                camera: 1,
             }),
         };
         save(&path, &config).unwrap();

@@ -6,6 +6,7 @@ mod branch;
 pub mod disk;
 mod encoder;
 mod segment;
+pub mod stream;
 pub mod ts;
 
 pub use branch::{RecordingBranch, RecordingStats};

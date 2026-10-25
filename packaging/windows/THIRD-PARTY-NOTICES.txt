@@ -20,6 +20,14 @@ GStreamer (https://gstreamer.freedesktop.org/)
   imagefreeze) has the same licence text as gst-plugins-base
   (licenses/gst-plugins-base-1.0).
 
+SRT (https://github.com/Haivision/srt) — x64 installer only
+  Secure Reliable Transport, for the live stream (e.g. to OBS). Mozilla Public
+  License 2.0 (licenses/srt); unmodified library, source at the address above.
+
+OpenSSL (https://www.openssl.org/) — x64 installer only
+  libcrypto, used by SRT for stream encryption. Apache License 2.0
+  (licenses/openssl).
+
 OpenH264 (https://www.openh264.org/)
   Software H.264 encoder, used only when no hardware encoder is available.
   Copyright (c) 2013, Cisco Systems. BSD 2-Clause licence (licenses/openh264).

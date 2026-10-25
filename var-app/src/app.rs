@@ -21,6 +21,7 @@ use crate::remote::RemoteControl;
 use crate::review::{MARKER_COLOR, ReviewAction, ReviewMode};
 use crate::setup::{self, ERROR_COLOR, MenuBar, RECORDING_COLOR, SetupAction, WARNING_COLOR};
 use crate::shortcuts::{self, Action};
+use crate::streaming::StreamControl;
 use crate::video::VideoRenderer;
 use var_playback::SPEEDS;
 
@@ -69,6 +70,8 @@ pub struct VarApp {
     resource_monitor: ResourceMonitor,
     /// Remote control for Bitfocus Companion (INP-003).
     remote: RemoteControl,
+    /// SRT stream of one camera, e.g. into OBS.
+    stream: StreamControl,
     /// The keyboard shortcut overlay is shown (F1, INP-002).
     help_open: bool,
     /// Help → About is shown.
@@ -265,6 +268,7 @@ impl VarApp {
             sleep_inhibitor: None,
             resource_monitor: ResourceMonitor::new(options.resource_log_interval),
             remote,
+            stream: StreamControl::new(config.stream.clone().unwrap_or_default()),
             help_open: false,
             about_open: false,
             window_full_screen: config.window_full_screen,
@@ -348,6 +352,7 @@ impl VarApp {
             disk_warning_minutes: Some(self.disk.warning_minutes),
             pin_hash: self.lock.pin_hash().map(str::to_owned),
             remote_control: Some(self.remote.settings),
+            stream: Some(self.stream.settings.clone()),
         }
     }
 
@@ -373,6 +378,11 @@ impl VarApp {
             return;
         }
         info!(count, "number of cameras changed");
+        // The streamed camera is removed: the stream ends.
+        if self.stream.settings.camera >= count {
+            self.stream.stop(&self.cameras);
+            self.stream.settings.camera = 0;
+        }
         while self.cameras.len() < count {
             self.cameras
                 .push(LiveCamera::new(self.cameras.len() as u64));
@@ -1075,6 +1085,7 @@ impl eframe::App for VarApp {
         self.auto_record();
         self.update_sleep_inhibitor();
         self.resource_monitor.update(&self.cameras, &self.recorder);
+        self.stream.update(&self.cameras);
         self.disk.update(
             &self.recorder.folder,
             recording::configured_bytes_per_second(&self.cameras),
@@ -1115,6 +1126,7 @@ impl eframe::App for VarApp {
                     recorder: &mut self.recorder,
                     disk: &mut self.disk,
                     remote: &mut self.remote,
+                    stream: &mut self.stream,
                     locked: self.lock.is_locked(),
                     has_pin: self.lock.has_pin(),
                     debug_overlay: &mut self.debug_overlay,
@@ -1210,6 +1222,7 @@ impl eframe::App for VarApp {
     }
 
     fn on_exit(&mut self) {
+        self.stream.stop(&self.cameras);
         // Any other way the application ends: still close the recording cleanly.
         if self.recorder.is_recording() {
             info!("application exiting while recording");

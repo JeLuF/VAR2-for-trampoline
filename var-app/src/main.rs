@@ -15,6 +15,7 @@ mod remote;
 mod review;
 mod setup;
 mod shortcuts;
+mod streaming;
 mod video;
 
 use std::path::PathBuf;

@@ -91,7 +91,10 @@ $plugins = @(
     # Review: parser, decodebin, hardware decoders (D3D11/D3D12).
     "videoparsersbad", "playback",
     # var-check: reads the MPEG-TS segments.
-    "mpegtsdemux"
+    "mpegtsdemux",
+    # SRT stream (e.g. to OBS): MPEG-TS muxer and SRT sink (x64 only; GStreamer for
+    # Windows ARM64 has no SRT).
+    "mpegtsmux", "srt"
 )
 foreach ($plugin in $plugins) {
     $dll = "$GStreamerRoot\lib\gstreamer-1.0\gst$plugin.dll"
@@ -154,7 +157,9 @@ $licenseSource = "$GStreamerRoot\share\licenses"
 $components = @(
     "gstreamer-1.0", "gst-plugins-base-1.0", "gst-plugins-good-1.0", "gst-plugins-bad-1.0",
     "glib", "libffi", "pcre2", "proxy-libintl", "orc", "libjpeg-turbo", "openh264", "zlib",
-    "mingw-runtime"
+    "mingw-runtime",
+    # SRT stream: libsrt (MPL-2.0) and OpenSSL's libcrypto (Apache-2.0).
+    "srt", "openssl"
 )
 foreach ($component in $components) {
     if (Test-Path "$licenseSource\$component") {
