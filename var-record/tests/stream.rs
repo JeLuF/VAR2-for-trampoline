@@ -1,7 +1,7 @@
 //! SRT stream of a camera into a receiver (as OBS would be), on the loopback address.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use gstreamer as gst;
@@ -12,8 +12,14 @@ use var_record::select_encoder;
 use var_record::stream::{self, StreamSettings, StreamState, Streamer};
 
 /// A receiver like OBS's Media Source: listens, demuxes MPEG-TS, decodes H.264.
-/// Counts decoded frames.
-fn receiver(port: u16) -> (gst::Pipeline, Arc<AtomicU64>) {
+/// Counts decoded frames and keeps the size of the last one.
+struct Receiver {
+    pipeline: gst::Pipeline,
+    frames: Arc<AtomicU64>,
+    size: Arc<Mutex<(i32, i32)>>,
+}
+
+fn receiver(port: u16) -> Receiver {
     let pipeline = gst::parse::launch(&format!(
         "srtsrc uri=srt://127.0.0.1:{port}?mode=listener latency=120 \
          ! tsdemux ! h264parse ! decodebin ! appsink name=sink sync=false"
@@ -22,6 +28,7 @@ fn receiver(port: u16) -> (gst::Pipeline, Arc<AtomicU64>) {
     .downcast::<gst::Pipeline>()
     .unwrap();
     let frames = Arc::new(AtomicU64::new(0));
+    let size = Arc::new(Mutex::new((0, 0)));
     let sink = pipeline
         .by_name("sink")
         .unwrap()
@@ -31,15 +38,27 @@ fn receiver(port: u16) -> (gst::Pipeline, Arc<AtomicU64>) {
         gst_app::AppSinkCallbacks::builder()
             .new_sample({
                 let frames = Arc::clone(&frames);
+                let size = Arc::clone(&size);
                 move |sink| {
-                    let _ = sink.pull_sample();
+                    if let Ok(sample) = sink.pull_sample()
+                        && let Some(s) = sample.caps().and_then(|c| c.structure(0))
+                    {
+                        *size.lock().unwrap() = (
+                            s.get::<i32>("width").unwrap_or(0),
+                            s.get::<i32>("height").unwrap_or(0),
+                        );
+                    }
                     frames.fetch_add(1, Ordering::Relaxed);
                     Ok(gst::FlowSuccess::Ok)
                 }
             })
             .build(),
     );
-    (pipeline, frames)
+    Receiver {
+        pipeline,
+        frames,
+        size,
+    }
 }
 
 fn wait_for(timeout: Duration, mut check: impl FnMut() -> bool) -> bool {
@@ -51,6 +70,26 @@ fn wait_for(timeout: Duration, mut check: impl FnMut() -> bool) -> bool {
         std::thread::sleep(Duration::from_millis(20));
     }
     false
+}
+
+/// A grey NV12 frame, as the review hands over.
+fn still_frame(width: i32, height: i32) -> (gst::Buffer, gst::Caps) {
+    let size = (width * height * 3 / 2) as usize;
+    let buffer = gst::Buffer::from_mut_slice(vec![128u8; size]);
+    let caps = gst::Caps::builder("video/x-raw")
+        .field("format", "NV12")
+        .field("width", width)
+        .field("height", height)
+        .field("framerate", gst::Fraction::new(0, 1))
+        .build();
+    (buffer, caps)
+}
+
+/// Frames received in `duration`.
+fn received_in(receiver: &Receiver, duration: Duration) -> u64 {
+    let before = receiver.frames.load(Ordering::Relaxed);
+    std::thread::sleep(duration);
+    receiver.frames.load(Ordering::Relaxed) - before
 }
 
 #[test]
@@ -76,7 +115,7 @@ fn camera_streams_to_receiver_and_reconnects() {
     let camera = Camera::start(&device, &mode, || {}).unwrap();
 
     let port = 19_000 + (std::process::id() % 1000) as u16;
-    let (receiver, frames) = receiver(port);
+    let receiver = receiver(port);
     // VAR first, as caller: the receiver isn't there yet, so it retries.
     let streamer = Streamer::start(
         &encoder,
@@ -85,7 +124,9 @@ fn camera_streams_to_receiver_and_reconnects() {
             latency_ms: 120,
             passphrase: String::new(),
             bitrate_kbps: 4000,
-            fps: 50,
+            fps: 60,
+            width: 1920,
+            height: 1080,
         },
     )
     .unwrap();
@@ -102,13 +143,15 @@ fn camera_streams_to_receiver_and_reconnects() {
     assert_ne!(streamer.state(), StreamState::Streaming);
 
     // The receiver appears: the stream connects by itself and video arrives.
-    receiver.set_state(gst::State::Playing).unwrap();
+    receiver.pipeline.set_state(gst::State::Playing).unwrap();
     let connected = Instant::now();
     assert!(
-        wait_for(Duration::from_secs(20), || frames.load(Ordering::Relaxed)
+        wait_for(Duration::from_secs(20), || receiver
+            .frames
+            .load(Ordering::Relaxed)
             >= 100),
         "frames received: {}, state {:?}",
-        frames.load(Ordering::Relaxed),
+        receiver.frames.load(Ordering::Relaxed),
         streamer.state()
     );
     println!(
@@ -118,6 +161,27 @@ fn camera_streams_to_receiver_and_reconnects() {
     );
     assert_eq!(streamer.state(), StreamState::Streaming);
     assert!(streamer.bitrate() > 0.0, "bitrate not measured");
+
+    // Review: a still frame of another size instead of the camera. It is repeated at
+    // the frame rate and scaled to the stream's size.
+    let (buffer, caps) = still_frame(1280, 720);
+    streamer.show_frame(buffer, caps);
+    std::thread::sleep(Duration::from_millis(500));
+    let still = received_in(&receiver, Duration::from_secs(2));
+    println!("still frame: {still} frames in 2 s");
+    assert!(
+        still >= 90,
+        "still frame not repeated: {still} frames in 2 s"
+    );
+    assert_eq!(*receiver.size.lock().unwrap(), (1920, 1080));
+
+    // Back to live.
+    streamer.show_live();
+    std::thread::sleep(Duration::from_millis(500));
+    let live = received_in(&receiver, Duration::from_secs(2));
+    println!("live again: {live} frames in 2 s");
+    assert!(live >= 90, "live not resumed: {live} frames in 2 s");
+    assert_eq!(streamer.state(), StreamState::Streaming);
 
     // The camera is not held up by the stream (a few drops may come from load).
     let stats = camera.stats();
@@ -134,5 +198,5 @@ fn camera_streams_to_receiver_and_reconnects() {
     std::thread::sleep(Duration::from_millis(200));
     camera.remove(attached);
     drop(streamer);
-    receiver.set_state(gst::State::Null).unwrap();
+    receiver.pipeline.set_state(gst::State::Null).unwrap();
 }

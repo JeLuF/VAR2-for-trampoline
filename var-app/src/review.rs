@@ -8,7 +8,7 @@ use std::sync::Arc;
 use chrono::{Local, TimeZone, Timelike};
 use eframe::egui::{self, Align2, Color32, FontId, Rect, Sense, Stroke};
 use var_core::index::LiveIndex;
-use var_playback::{CameraState, MAX_REVERSE_SPEED, ReviewPlayer, SPEEDS};
+use var_playback::{CameraState, MAX_REVERSE_SPEED, ReviewFrame, ReviewPlayer, SPEEDS};
 
 use crate::drawing::Drawing;
 use crate::markers::Marker;
@@ -54,6 +54,11 @@ impl ReviewMode {
 
     pub fn player(&mut self) -> &mut ReviewPlayer {
         &mut self.player
+    }
+
+    /// The frame camera `slot` shows at the review position, if any.
+    pub fn frame(&self, slot: usize) -> Option<Arc<ReviewFrame>> {
+        self.player.camera(slot).and_then(|camera| camera.frame())
     }
 
     /// How many seconds laser pointer trails stay (DRW-002).

@@ -20,6 +20,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use gstreamer as gst;
+use gstreamer_video as gst_video;
 use tracing::{debug, info, warn};
 use var_core::color::YuvColorimetry;
 use var_core::index::LiveIndex;
@@ -89,6 +90,36 @@ impl ReviewFrame {
     }
     pub fn colorimetry(&self) -> YuvColorimetry {
         self.decoded.colorimetry()
+    }
+
+    /// The frame as a GStreamer buffer with its caps, e.g. for the live stream. The
+    /// buffer shares the planes (no copy) and keeps the frame alive.
+    pub fn to_buffer(self: &Arc<Self>) -> (gst::Buffer, gst::Caps) {
+        /// One plane of a shared frame, as buffer memory.
+        struct Plane(Arc<ReviewFrame>, u32);
+        impl AsRef<[u8]> for Plane {
+            fn as_ref(&self) -> &[u8] {
+                self.0.plane(self.1)
+            }
+        }
+
+        let mut buffer = gst::Buffer::new();
+        {
+            let buffer = buffer.get_mut().unwrap();
+            buffer.append_memory(gst::Memory::from_slice(Plane(Arc::clone(self), 0)));
+            buffer.append_memory(gst::Memory::from_slice(Plane(Arc::clone(self), 1)));
+            // Where the planes are: the rows are copied without the decoder's padding.
+            let _ = gst_video::VideoMeta::add_full(
+                buffer,
+                gst_video::VideoFrameFlags::empty(),
+                gst_video::VideoFormat::Nv12,
+                self.width(),
+                self.height(),
+                &[0, self.plane(0).len()],
+                &[self.stride(0) as i32, self.stride(1) as i32],
+            );
+        }
+        (buffer, self.decoded.caps().clone())
     }
 }
 

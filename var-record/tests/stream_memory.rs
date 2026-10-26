@@ -51,6 +51,8 @@ fn stream_memory_stays_flat() {
             passphrase: String::new(),
             bitrate_kbps: 6000,
             fps: 60,
+            width: 1920,
+            height: 1080,
         },
     )
     .unwrap();

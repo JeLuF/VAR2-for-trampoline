@@ -1085,7 +1085,6 @@ impl eframe::App for VarApp {
         self.auto_record();
         self.update_sleep_inhibitor();
         self.resource_monitor.update(&self.cameras, &self.recorder);
-        self.stream.update(&self.cameras);
         self.disk.update(
             &self.recorder.folder,
             recording::configured_bytes_per_second(&self.cameras),
@@ -1116,6 +1115,9 @@ impl eframe::App for VarApp {
             review.set_drawing_lifetime(self.laser_seconds);
             review.tick();
         }
+        // The stream follows the screen: full-screen camera, live or review.
+        self.stream
+            .update(&self.cameras, self.full_screen, self.review.as_ref());
 
         egui::TopBottomPanel::top("menu bar").show(ctx, |ui| {
             let mut camera_count = self.cameras.len();

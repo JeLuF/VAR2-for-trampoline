@@ -3927,7 +3927,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "var-app"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "argon2",
@@ -3952,7 +3952,7 @@ dependencies = [
 
 [[package]]
 name = "var-capture"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "gstreamer",
@@ -3967,7 +3967,7 @@ dependencies = [
 
 [[package]]
 name = "var-check"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3979,14 +3979,14 @@ dependencies = [
 
 [[package]]
 name = "var-control"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "tracing",
 ]
 
 [[package]]
 name = "var-core"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "directories",
@@ -3999,7 +3999,7 @@ dependencies = [
 
 [[package]]
 name = "var-playback"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "gstreamer",
  "gstreamer-app",
@@ -4013,7 +4013,7 @@ dependencies = [
 
 [[package]]
 name = "var-record"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "gstreamer",

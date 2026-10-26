@@ -560,22 +560,16 @@ fn stream_menu(
         .num_columns(2)
         .spacing([12.0, 6.0])
         .show(ui, |ui| {
-            // The camera can be switched while streaming.
-            ui.label("Camera");
+            // The camera can be switched while streaming (the stream follows it).
+            ui.label("Camera").on_hover_text(
+                "The stream shows what the screen shows: the camera in full screen, \
+                 in the split view this camera; live, or in review the review playback.",
+            );
             ui.horizontal(|ui| {
-                let before = stream.settings.camera;
                 for slot in 0..cameras.len() {
                     ui.radio_value(&mut stream.settings.camera, slot, (slot + 1).to_string());
                 }
-                if running && stream.settings.camera != before {
-                    // Restart with the new camera's frame rate.
-                    stream.stop(cameras);
-                    let encoder = match recorder.encoder() {
-                        EncoderState::Found(encoder) => Some(encoder),
-                        _ => None,
-                    };
-                    stream.start(encoder.as_ref(), cameras);
-                }
+                ui.weak("(split view; full screen streams that camera)");
             });
             ui.end_row();
 
@@ -589,7 +583,7 @@ fn stream_menu(
                 .on_hover_text(
                     "srt://<OBS computer>:<port>: this computer connects to OBS.\n\
                      srt://:<port>?mode=listener: OBS connects to this computer.\n\
-                     Further SRT options can follow, e.g. &streamid=…",
+                     Further SRT options can follow, e.g. &streamid=...",
                 );
             });
             ui.end_row();
@@ -637,23 +631,57 @@ fn stream_menu(
     ui.label(RichText::new("In OBS").strong());
     ui.weak(
         "Sources > + > Media Source; untick \"Local File\"; \
-         Input: srt://0.0.0.0:9000?mode=listener (add &passphrase=... if set); \
-         Input Format: mpegts. Then stream here to srt://<OBS computer>:9000.",
+         Input: the URL below; Input Format: mpegts.",
     );
+    // This computer's address only matters when OBS connects to it (listener mode).
+    let local = var_control::local_address();
+    match stream.settings.obs_input_url(local, false) {
+        Some(shown) => {
+            // The last copied URL, to confirm the copy while the menu stays open.
+            let copied_id = ui.id().with("obs url copied");
+            ui.horizontal(|ui| {
+                ui.monospace(&shown);
+                let url = stream.settings.obs_input_url(local, true);
+                if ui
+                    .button("Copy to clipboard")
+                    .on_hover_text("Copies the Input for OBS, with the passphrase if set.")
+                    .clicked()
+                {
+                    ui.ctx().copy_text(url.clone().unwrap_or_default());
+                    ui.data_mut(|d| d.insert_temp(copied_id, url.clone()));
+                }
+                if ui.data(|d| d.get_temp::<Option<String>>(copied_id)) == Some(url) {
+                    ui.weak("Copied");
+                }
+            });
+        }
+        None => {
+            ui.weak(
+                "Enter the SRT URL with a port (srt://<OBS computer>:9000) to get the URL for OBS.",
+            );
+        }
+    }
 }
 
 /// Text and colour of the stream state.
 fn stream_status_text(stream: &StreamControl) -> (String, Option<Color32>) {
-    let camera = stream.settings.camera + 1;
+    let camera = stream.shown + 1;
+    let what = if stream.is_review() { "review" } else { "live" };
     match stream.status() {
         StreamStatus::Off => ("Not streaming".into(), None),
-        StreamStatus::Connecting => (format!("Camera {camera}: connecting…"), Some(WARNING_COLOR)),
+        StreamStatus::Connecting => (
+            format!("Camera {camera}: connecting..."),
+            Some(WARNING_COLOR),
+        ),
         StreamStatus::WaitingForReceiver => (
             format!("Camera {camera}: waiting for the receiver to connect"),
             Some(WARNING_COLOR),
         ),
         StreamStatus::Streaming { bitrate } => (
-            format!("Streaming camera {camera}, {:.1} Mbit/s", bitrate / 1e6),
+            format!(
+                "Streaming camera {camera} {what}, {:.1} Mbit/s",
+                bitrate / 1e6
+            ),
             Some(LIVE_COLOR),
         ),
         StreamStatus::Retrying(e) => (format!("Camera {camera}: {e}; retrying"), Some(ERROR_COLOR)),
@@ -670,9 +698,13 @@ fn stream_status(ui: &mut egui::Ui, stream: &StreamControl) {
     };
     let (hover, _) = stream_status_text(stream);
     ui.label(
-        RichText::new(format!("{text} cam {}", stream.settings.camera + 1))
-            .strong()
-            .color(color),
+        RichText::new(format!(
+            "{text} cam {}{}",
+            stream.shown + 1,
+            if stream.is_review() { " review" } else { "" }
+        ))
+        .strong()
+        .color(color),
     )
     .on_hover_text(hover);
     ui.separator();

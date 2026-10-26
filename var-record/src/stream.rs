@@ -1,17 +1,20 @@
-//! Live stream of one camera over SRT, e.g. into OBS (Media Source).
+//! Stream of one camera over SRT, e.g. into OBS (Media Source): the live picture, or
+//! frames handed over one by one (the review playback).
 //!
 //! ```text
 //! camera pipeline:  tee ─ tap: queue (leaky) ─ appsink
-//!                                                │ frames handed over
-//! stream pipeline:  appsrc (leaky) ─ videoconvert ─ H.264 encoder ─ h264parse
-//!                   ─ mpegtsmux ─ srtsink
+//!                                                │ live frames handed over
+//! other frames:     show_frame ─ repeated at the frame rate ┤
+//! stream pipeline:  appsrc (leaky) ─ videoconvert ─ videoscale ─ fixed caps
+//!                   ─ H.264 encoder ─ h264parse ─ mpegtsmux ─ srtsink
 //! ```
 //!
 //! The stream runs in a pipeline of its own: a missing receiver, network errors or a
-//! slow encoder never reach the camera pipeline, so recording and live view are not
-//! affected. The tap only hands frames over (no copy) and drops them when the stream
-//! falls behind. A thread of its own connects (which can block for seconds), watches
-//! the stream and reconnects after errors.
+//! slow encoder never reach the camera pipeline. The tap only hands frames over (no
+//! copy) and drops them when the stream falls behind. The encoder input has a fixed
+//! size and frame rate, so switching between cameras or between live and review
+//! frames doesn't reconfigure the encoder. A thread of its own connects (which can
+//! block for seconds), watches the stream and reconnects after errors.
 
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -45,8 +48,11 @@ pub struct StreamSettings {
     /// Encryption passphrase, 10–79 characters; empty: no encryption.
     pub passphrase: String,
     pub bitrate_kbps: u32,
-    /// Frame rate of the camera, for the keyframe interval (1 s).
+    /// Frame rate of the stream (the camera's), also for the keyframe interval (1 s).
     pub fps: u32,
+    /// Picture size of the stream; frames of other sizes are scaled.
+    pub width: u32,
+    pub height: u32,
 }
 
 impl StreamSettings {
@@ -107,6 +113,37 @@ struct Shared {
     /// Listener: receivers connected.
     receivers: AtomicI32,
     stop: AtomicBool,
+    /// Frames come from `show_frame`, not from the tap.
+    external: AtomicBool,
+    /// The frame from `show_frame`, repeated at the frame rate.
+    frame: Mutex<Option<(gst::Buffer, gst::Caps)>>,
+    fps: u32,
+}
+
+impl Shared {
+    /// Hands a frame to the running stream (dropped while reconnecting). The data is
+    /// shared, not copied; timestamps come from the stream's clock.
+    fn push(&self, buffer: &gst::Buffer, caps: &gst::CapsRef) {
+        let Some(source) = self.source.lock().unwrap().clone() else {
+            return;
+        };
+        // The stream's frame rate, whatever the frame's origin says: its caps then stay
+        // the same between live and review frames.
+        let mut caps = caps.to_owned();
+        if let Some(s) = caps.make_mut().structure_mut(0) {
+            s.set("framerate", gst::Fraction::new(self.fps as i32, 1));
+        }
+        if source.caps().as_ref() != Some(&caps) {
+            source.set_caps(Some(&caps));
+        }
+        let mut buffer = buffer.copy();
+        {
+            let buffer = buffer.get_mut().unwrap();
+            buffer.set_pts(gst::ClockTime::NONE);
+            buffer.set_dts(gst::ClockTime::NONE);
+        }
+        let _ = source.push_buffer(buffer);
+    }
 }
 
 /// A running SRT stream. Stops when dropped.
@@ -132,6 +169,9 @@ impl Streamer {
             bytes: AtomicU64::new(0),
             receivers: AtomicI32::new(0),
             stop: AtomicBool::new(false),
+            external: AtomicBool::new(false),
+            frame: Mutex::new(None),
+            fps: settings.fps.max(1),
         });
         let encoder = encoder.clone();
         std::thread::Builder::new()
@@ -139,6 +179,13 @@ impl Streamer {
             .spawn({
                 let shared = Arc::clone(&shared);
                 move || run(&encoder, &settings, &shared)
+            })
+            .map_err(|e| RecordError::Pipeline(e.to_string()))?;
+        std::thread::Builder::new()
+            .name("var-stream-frames".into())
+            .spawn({
+                let shared = Arc::clone(&shared);
+                move || repeat_frames(&shared)
             })
             .map_err(|e| RecordError::Pipeline(e.to_string()))?;
         Ok(Streamer {
@@ -169,22 +216,11 @@ impl Streamer {
                 gst_app::AppSinkCallbacks::builder()
                     .new_sample(move |sink| {
                         let sample = sink.pull_sample().map_err(|_| gst::FlowError::Eos)?;
-                        let source = shared.source.lock().unwrap().clone();
-                        if let (Some(source), Some(buffer), Some(caps)) =
-                            (source, sample.buffer(), sample.caps())
+                        if !shared.external.load(Ordering::Relaxed)
+                            && let (Some(buffer), Some(caps)) =
+                                (sample.buffer_owned(), sample.caps())
                         {
-                            if source.caps().as_ref() != Some(&caps.to_owned()) {
-                                source.set_caps(Some(&caps.to_owned()));
-                            }
-                            // New timestamps from the stream's own clock; the data
-                            // itself is shared, not copied.
-                            let mut buffer = buffer.copy();
-                            {
-                                let buffer = buffer.get_mut().unwrap();
-                                buffer.set_pts(gst::ClockTime::NONE);
-                                buffer.set_dts(gst::ClockTime::NONE);
-                            }
-                            let _ = source.push_buffer(buffer);
+                            shared.push(&buffer, caps);
                         }
                         Ok(gst::FlowSuccess::Ok)
                     })
@@ -200,6 +236,19 @@ impl Streamer {
         ghost.set_active(true).map_err(|e| err(&e))?;
         bin.add_pad(&ghost).map_err(|e| err(&e))?;
         Ok(bin)
+    }
+
+    /// Streams this frame instead of the tap's, repeated at the frame rate until the
+    /// next one (e.g. review playback: paused, slow motion). Any size; it is scaled.
+    pub fn show_frame(&self, buffer: gst::Buffer, caps: gst::Caps) {
+        *self.shared.frame.lock().unwrap() = Some((buffer, caps));
+        self.shared.external.store(true, Ordering::Relaxed);
+    }
+
+    /// Streams the tap's frames (the live picture) again.
+    pub fn show_live(&self) {
+        self.shared.external.store(false, Ordering::Relaxed);
+        *self.shared.frame.lock().unwrap() = None;
     }
 
     pub fn state(&self) -> StreamState {
@@ -261,6 +310,30 @@ fn run(encoder: &EncoderInfo, settings: &StreamSettings, shared: &Arc<Shared>) {
         }
     }
     info!("stream stopped");
+}
+
+/// While frames come from `show_frame`: pushes the current one at the frame rate, so
+/// the receiver gets a steady stream also while the picture stands still.
+fn repeat_frames(shared: &Shared) {
+    let interval = Duration::from_secs(1) / shared.fps;
+    let mut next = Instant::now();
+    while !shared.stop.load(Ordering::Relaxed) {
+        next += interval;
+        let now = Instant::now();
+        if next > now {
+            std::thread::sleep(next - now);
+        } else if now - next > interval * 4 {
+            // Fell behind (e.g. the machine was suspended): no burst of frames.
+            next = now;
+        }
+        if !shared.external.load(Ordering::Relaxed) {
+            continue;
+        }
+        let frame = shared.frame.lock().unwrap().clone();
+        if let Some((buffer, caps)) = frame {
+            shared.push(&buffer, &caps);
+        }
+    }
 }
 
 /// Starts the pipeline and watches it until stopped (`None`) or an error (`Some`).
@@ -329,7 +402,8 @@ fn bus_error_timeout(bus: &gst::Bus, timeout: Duration) -> Option<String> {
     })
 }
 
-/// The stream pipeline: appsrc ─ videoconvert ─ encoder ─ h264parse ─ mpegtsmux ─ srtsink.
+/// The stream pipeline: appsrc ─ videoconvert ─ videoscale ─ fixed caps ─ encoder
+/// ─ h264parse ─ mpegtsmux ─ srtsink.
 fn build(
     encoder: &EncoderInfo,
     settings: &StreamSettings,
@@ -355,6 +429,8 @@ fn build(
         source.set_property_from_str("leaky-type", "downstream");
     }
     let convert = make("videoconvert")?;
+    let scale = make("videoscale")?;
+    let fixed = make("capsfilter")?;
     // One keyframe per second: OBS shows the picture quickly after (re)connecting.
     let encoder_element = make_encoder(
         encoder,
@@ -371,6 +447,28 @@ fn build(
             encoder_element.set_property(low_latency, true);
         }
     }
+    // The encoder's input stays the same whatever the frames are; NV12 (as the cameras
+    // and the review deliver it) unless the encoder needs I420.
+    let nv12 = gst::Caps::builder("video/x-raw")
+        .field("format", "NV12")
+        .build();
+    let format = match encoder_element.static_pad("sink") {
+        Some(pad) if !pad.query_caps(None).can_intersect(&nv12) => "I420",
+        _ => "NV12",
+    };
+    fixed.set_property(
+        "caps",
+        gst::Caps::builder("video/x-raw")
+            .field("format", format)
+            .field("width", settings.width.max(16) as i32)
+            .field("height", settings.height.max(16) as i32)
+            .field(
+                "framerate",
+                gst::Fraction::new(settings.fps.max(1) as i32, 1),
+            )
+            .field("pixel-aspect-ratio", gst::Fraction::new(1, 1))
+            .build(),
+    );
     let parse = make("h264parse")?;
     parse.set_property("config-interval", -1i32);
     let mux = make("mpegtsmux")?;
@@ -430,6 +528,8 @@ fn build(
     let chain = [
         source.upcast_ref::<gst::Element>(),
         &convert,
+        &scale,
+        &fixed,
         &encoder_element,
         &parse,
         &mux,
@@ -451,6 +551,8 @@ mod tests {
             passphrase: passphrase.into(),
             bitrate_kbps: 8000,
             fps: 50,
+            width: 1920,
+            height: 1080,
         }
     }
 

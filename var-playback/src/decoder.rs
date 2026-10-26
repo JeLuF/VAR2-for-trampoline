@@ -21,11 +21,17 @@ pub struct DecodedFrame {
     planes: [Vec<u8>; 2],
     strides: [u32; 2],
     colorimetry: YuvColorimetry,
+    /// The decoder's output caps (NV12), e.g. to hand the frame on to an encoder.
+    caps: gst::Caps,
     /// Timestamp given when the frame was pushed, ns.
     pub pts_ns: u64,
 }
 
 impl DecodedFrame {
+    pub fn caps(&self) -> &gst::Caps {
+        &self.caps
+    }
+
     pub fn width(&self) -> u32 {
         self.width
     }
@@ -122,7 +128,8 @@ impl Decoder {
     /// The next decoded frame, waiting at most `timeout`.
     pub fn pull(&self, timeout: gst::ClockTime) -> Option<DecodedFrame> {
         let sample = self.sink.try_pull_sample(timeout)?;
-        let info = gst_video::VideoInfo::from_caps(sample.caps()?).ok()?;
+        let caps = sample.caps_owned()?;
+        let info = gst_video::VideoInfo::from_caps(&caps).ok()?;
         let buffer = sample.buffer_owned()?;
         let pts_ns = buffer.pts()?.nseconds();
         let colorimetry = var_capture::yuv_colorimetry(&info);
@@ -144,6 +151,7 @@ impl Decoder {
             planes,
             strides,
             colorimetry,
+            caps,
             pts_ns,
         })
     }
